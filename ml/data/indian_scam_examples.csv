@@ -1,0 +1,33 @@
+text,label,category,source,split
+"Your UPI collect request is pending. Approve it and enter your PIN to receive the refund.",scam,upi_fraud,project_authored_original,auto
+"Your bank account will be blocked tonight. Verify your customer details immediately.",scam,banking_phishing,project_authored_original,auto
+"Tell me the OTP you received so I can reverse the failed payment.",scam,otp_theft,project_authored_original,auto
+"Pay a registration fee today to reserve your work from home job.",scam,job_fraud,project_authored_original,auto
+"Customs has held your parcel. Send the clearance amount now to release delivery.",scam,courier_scam,project_authored_original,auto
+"Install a screen sharing app and keep it open while our support agent fixes your account.",scam,fake_customer_support,project_authored_original,auto
+"Your electricity service will be disconnected in one hour unless you pay this bill now.",scam,electricity_bill_scam,project_authored_original,auto
+"A digital arrest warrant has been issued. Stay on this video call and do not contact anyone.",scam,digital_arrest,project_authored_original,auto
+"Double your investment this week with guaranteed returns and no risk.",scam,investment_fraud,project_authored_original,auto
+"Share your card number and security code to reactivate your online banking access.",scam,banking_phishing,project_authored_original,auto
+"You have won a prize. Pay the processing fee to claim your reward today.",scam,lottery_fraud,project_authored_original,auto
+"Use this QR code and enter your UPI PIN to collect the money I am sending.",scam,upi_fraud,project_authored_original,auto
+"Your KYC will expire today. Send the verification code to avoid account suspension.",scam,fake_kyc,project_authored_original,auto
+"Transfer the amount to my personal UPI account because the official payment page is down.",scam,unusual_payment,project_authored_original,auto
+"Pay an upfront processing charge before the instant loan is credited to you.",scam,loan_scam,project_authored_original,auto
+"Your parcel contains a prohibited item. Pay a penalty now or police will arrest you.",scam,courier_scam,project_authored_original,auto
+"Your salary was credited today. The payslip is available in the employee portal.",legitimate,workplace_message,project_authored_original,auto
+"The electricity bill for this month is ready in the official app. Payment is due next week.",legitimate,utility_notice,project_authored_original,auto
+"Your bank statement is available to download after signing in through the mobile app.",legitimate,banking_notice,project_authored_original,auto
+"The parcel has been delivered to the reception desk. Please collect it when convenient.",legitimate,delivery_update,project_authored_original,auto
+"Your job interview is scheduled for Tuesday at 11 AM. Please bring a copy of your resume.",legitimate,job_notice,project_authored_original,auto
+"The monthly maintenance meeting will take place in the society hall this evening.",legitimate,community_message,project_authored_original,auto
+"We received your payment for the electricity bill. No further action is needed.",legitimate,utility_notice,project_authored_original,auto
+"Your refund was processed to the original payment method. The amount may take a few days to appear.",legitimate,transaction_notice,project_authored_original,auto
+"The bank will never ask you to share an OTP or PIN. Contact support using the number on your card.",legitimate,security_advisory,project_authored_original,auto
+"Please confirm whether you can attend the training session at the office tomorrow.",legitimate,workplace_message,project_authored_original,auto
+"Your grocery order is packed and will arrive during the delivery window you selected.",legitimate,delivery_update,project_authored_original,auto
+"The school fee receipt is available in the parent portal after your payment was recorded.",legitimate,education_notice,project_authored_original,auto
+"We have scheduled routine maintenance for the banking app on Sunday morning.",legitimate,banking_notice,project_authored_original,auto
+"The courier could not reach your address. Choose a new delivery time in the shopping app.",legitimate,delivery_update,project_authored_original,auto
+"Your interview feedback will be shared by the hiring team after the final round.",legitimate,job_notice,project_authored_original,auto
+"The monthly electricity bill has been paid by your saved autopay instruction.",legitimate,utility_notice,project_authored_original,auto
