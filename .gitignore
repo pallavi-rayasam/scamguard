@@ -10,6 +10,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.runtime/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -22,6 +23,7 @@ dist/
 build/
 coverage/
 .vite/
+*.tsbuildinfo
 
 # Runtime and generated content
 uploads/

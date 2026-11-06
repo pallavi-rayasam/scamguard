@@ -1,0 +1,8 @@
+{
+  "rbi": ["rbi.org.in"],
+  "uidai": ["uidai.gov.in"],
+  "income tax": ["incometax.gov.in"],
+  "sbi": ["sbi.co.in", "onlinesbi.sbi"],
+  "cbi": ["cbi.gov.in"],
+  "customs": ["cbic.gov.in"]
+}

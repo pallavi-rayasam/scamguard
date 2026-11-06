@@ -1,0 +1,20 @@
+[
+  {"code":"phishing","name":"Phishing","language":"en","patterns":["verify your account","account suspended","account is suspended","click here to verify"]},
+  {"code":"upi_fraud","name":"UPI fraud","language":"en","patterns":["collect request","scan this qr to receive","enter your upi pin to receive"]},
+  {"code":"banking_fraud","name":"Banking fraud","language":"en","patterns":["bank account blocked","bank account suspended","debit card blocked"]},
+  {"code":"otp_theft","name":"OTP theft","language":"en","patterns":["share the otp","tell me the otp","send otp"]},
+  {"code":"fake_kyc","name":"Fake KYC","language":"en","patterns":["kyc update","kyc will expire","complete kyc immediately"]},
+  {"code":"job_fraud","name":"Job fraud","language":"en","patterns":["pay registration fee","job offer fee","training fee to confirm job"]},
+  {"code":"investment_fraud","name":"Investment fraud","language":"en","patterns":["guaranteed returns","double your money","risk free investment"]},
+  {"code":"lottery_fraud","name":"Lottery fraud","language":"en","patterns":["you have won a lottery","claim your prize","processing fee to release prize"]},
+  {"code":"digital_arrest","name":"Digital arrest","language":"en","patterns":["digital arrest","video call investigation","stay on the call with police"]},
+  {"code":"courier_scam","name":"Courier scam","language":"en","patterns":["parcel seized","customs clearance fee","courier contains illegal items"]},
+  {"code":"electricity_bill_scam","name":"Electricity bill scam","language":"en","patterns":["electricity will be disconnected","power will be cut tonight","update your electricity bill"]},
+  {"code":"identity_impersonation","name":"Identity impersonation","language":"en","patterns":["we are from your bank","calling from police department","representative from uidai"]},
+  {"code":"fake_customer_support","name":"Fake customer support","language":"en","patterns":["customer care number","screen sharing app","install remote support app"]},
+  {"code":"romance_scam","name":"Romance scam","language":"en","patterns":["send money for emergency","gift is held at customs","need money for medical emergency"]},
+  {"code":"online_shopping_fraud","name":"Online shopping fraud","language":"en","patterns":["pay outside the app","payment failed send again","too good to be true discount"]},
+  {"code":"loan_scam","name":"Loan scam","language":"en","patterns":["pay upfront loan fee","instant loan processing fee","loan app access to contacts"]},
+  {"code":"crypto_scam","name":"Crypto scam","language":"en","patterns":["guaranteed crypto profit","send crypto to unlock","double your bitcoin"]},
+  {"code":"other_suspicious","name":"Other suspicious activity","language":"en","patterns":[]}
+]
