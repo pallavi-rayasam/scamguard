@@ -121,8 +121,13 @@ def create_text_investigation(
                 detail=evidence.get("detail", "")[:2000],
                 observed_at=timestamp or datetime.now(timezone.utc),
             ))
+    url_scans = {item.get("origin"): item for item in report.get("url_scans", []) if item.get("origin")}
     for url in report.get("urls", []):
-        db.add(ExtractedURL(investigation_id=investigation.id, url=url, findings={"network_fetch":"disabled"}))
+        db.add(ExtractedURL(
+            investigation_id=investigation.id,
+            url=url,
+            findings=url_scans.get(url, {"network_fetch":"not_configured"}),
+        ))
     for intel in report.get("threat_intel_results", []):
         db.add(ThreatIntelResult(
             investigation_id=investigation.id,
@@ -246,7 +251,7 @@ def scam_awareness() -> dict:
 @router.get("/admin/analytics")
 def admin_analytics(_: User = Depends(admin_user), db: Session = Depends(get_db)) -> dict:
     total = db.scalar(select(func.count()).select_from(Investigation)) or 0
-    failures = db.scalar(select(func.count()).select_from(AgentRun).where(AgentRun.status.in_(["failed", "timed_out"]))) or 0
+    failures = db.scalar(select(func.count()).select_from(AgentRun).where(AgentRun.status.in_(["failed", "timed_out", "unavailable"]))) or 0
     return {"total_investigations": total, "agent_failures": failures}
 
 

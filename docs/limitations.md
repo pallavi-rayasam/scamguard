@@ -1,7 +1,8 @@
 # Known limitations
 
 - The current detector uses phrase patterns and transparent rules. There is no trained or calibrated text classifier, so model confidence is `not_available` and the score is not a probability.
-- URL checks inspect the origin, HTTPS scheme, shortener membership, domain depth, Punycode, and seeded lookalikes. The application does not fetch URLs, follow redirects, inspect page content, or safely determine a final destination.
+- URL checks inspect HTTPS, shorteners, domain depth, Punycode, and lookalikes against the small seeded organization-domain list. The separate scanner uses pinned public-IP connections, manually revalidates redirects, and only performs HEAD or a capped GET for text content when HEAD is unsupported. It does not execute scripts or retain/return response bodies.
+- The scanner service is integrated through an internal Compose URL and is not host-published. Docker startup and live external provider calls remain unverified in this environment. Reputation lookups disclose only the URL origin and return `unavailable` when no key or provider response is available.
 - Reputation adapters are implemented but unverified because no Google Safe Browsing or VirusTotal key is configured. Unconfigured providers are marked skipped; no mock result is returned.
 - OpenAI is behind an explanation provider interface, but its Responses API call is unverified because no API key is configured. The explanation cannot change score or evidence.
 - The pattern/trusted-domain catalog is English only. Hindi/Kannada, OCR, screenshot ingestion, PDF reports, email headers, admin replay, and notification alerts are not implemented. The new evaluation harness uses only a tiny synthetic authored dataset and does not establish generalization.

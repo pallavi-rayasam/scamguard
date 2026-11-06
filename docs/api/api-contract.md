@@ -30,10 +30,12 @@ Investigation input types currently accepted: `text`, `sms`, `whatsapp`, `url`, 
 
 ## Report shape
 
-Reports include `category`, deterministic `risk_score`, `risk_level`, `score_is_probability: false`, `model_confidence`, `evidence_strength`, `data_availability`, `findings`, `evidence`, `agents`, `urls`, `threat_intel_results`, `redactions`, `recommendations`, `explanation`, and `limitations`. Agent status is one of `completed`, `skipped`, `failed`, or `timed_out`. Evidence carries a source, timestamp, detail, and verification level.
+Reports include `category`, deterministic `risk_score`, `risk_level`, `score_is_probability: false`, `model_confidence`, `evidence_strength`, `data_availability`, `findings`, `evidence`, `agents`, `urls`, `url_scans`, `threat_intel_results`, `redactions`, `recommendations`, `explanation`, and `limitations`. Agent status is one of `completed`, `skipped`, `failed`, `timed_out`, or `unavailable`. Evidence carries a source, timestamp, detail, and verification level.
+
+The internal URL scanner service exposes `GET /health` and `POST /scan` on port 8001 within the Compose network. It is not published to the host. `POST /scan` accepts one HTTP(S) URL, validates public DNS answers and pins the connection before a HEAD request. A capped GET is used only when HEAD is unsupported and the declared content type is text. It does not return page content or execute scripts. Provider lookups receive only the validated origin and return `unavailable` when unconfigured, timed out, failed, or rate-limited.
 
 The score thresholds are Low `0–24`, Moderate `25–49`, High `50–74`, Critical `75–100`. A provider's negative or missing match is never presented as proof of safety.
 
 ## Not implemented yet
 
-Dedicated `/url`, `/screenshot`, `/email`, `/conversation`, and `/transaction` paths; upload validation/OCR; `/report.pdf`; dashboard trends; admin redacted replay; evaluation execution; WebSocket/SSE status; pagination totals; and formal request/response models for every route.
+Dedicated public `/url`, `/screenshot`, `/email`, `/conversation`, and `/transaction` paths; upload validation/OCR; `/report.pdf`; dashboard trends; admin redacted replay; WebSocket/SSE status; pagination totals; and formal request/response models for every route.
