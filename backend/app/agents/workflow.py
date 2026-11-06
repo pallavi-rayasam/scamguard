@@ -10,6 +10,7 @@ from langgraph.graph import END, START, StateGraph
 import httpx
 
 from app.agents.contracts import AgentResult
+from app.core.config import settings
 from app.detection.normalize import extract_urls, load_organization_domains, normalize_text, privacy_safe_url, redact_sensitive, redact_urls_in_text
 from app.detection.rules import classify_message
 from app.detection.scoring import evidence_strength, score_findings
@@ -34,6 +35,7 @@ class WorkflowState(TypedDict, total=False):
     intel_results: Annotated[list[dict], operator.add]
     recommendation: list[str]
     explanation: str
+    url_scan_results: list[dict]
     score: int
     risk_level: str
     report: dict
@@ -95,6 +97,38 @@ def route_agents(state: WorkflowState) -> list[str]:
     return ["message_agent", "url_agent", "impersonation_agent", "conversation_agent"]
 
 
+def _scan_url_service(url: str) -> dict:
+    """Call the internal URL scanner without following its redirects at the HTTP layer."""
+    endpoint = settings.url_scanner_url.rstrip("/") + "/scan"
+    try:
+        with httpx.Client(timeout=60.0, follow_redirects=False) as client:
+            response = client.post(endpoint, json={"url": url})
+        if response.status_code == 429:
+            return {
+                "status": "unavailable", "reason": "scanner_rate_limited", "findings": [],
+                "threat_intel_results": [
+                    {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "scanner_rate_limited"}
+                    for provider in ("google_safe_browsing", "virustotal")
+                ],
+            }
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict) or result.get("status") not in {"completed", "blocked", "unavailable"}:
+            raise ValueError("Invalid scanner service response")
+        return result
+    except httpx.TimeoutException:
+        reason = "scanner_timed_out"
+    except (httpx.HTTPError, ValueError):
+        reason = "scanner_unavailable"
+    return {
+        "status": "unavailable", "reason": reason, "findings": [],
+        "threat_intel_results": [
+            {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason}
+            for provider in ("google_safe_browsing", "virustotal")
+        ],
+    }
+
+
 def message_agent(state: WorkflowState) -> dict:
     started = time.monotonic()
     result = classify_message(state.get("normalized_text", ""))
@@ -115,6 +149,31 @@ def url_agent(state: WorkflowState) -> dict:
                 _run("ThreatIntelligence", "skipped", started, [], [], "No URL was available for lookup."),
             ]
         }
+    if settings.url_scanner_url:
+        with ThreadPoolExecutor(max_workers=max(1, min(6, len(urls)))) as pool:
+            scan_results = list(pool.map(_scan_url_service, urls))
+        for result in scan_results:
+            findings.extend(result.get("findings", []))
+            intel_results.extend(result.get("threat_intel_results", []))
+            for item in result.get("threat_intel_results", []):
+                if item.get("status") in {"completed", "failed", "timed_out", "unavailable"}:
+                    providers_used.add(item["provider"])
+        statuses = {item["status"] for item in intel_results}
+        intel_status = (
+            "completed" if "completed" in statuses
+            else "timed_out" if "timed_out" in statuses
+            else "failed" if "failed" in statuses
+            else "unavailable" if "unavailable" in statuses
+            else "skipped"
+        )
+        url_statuses = {item.get("status") for item in scan_results}
+        url_status = "unavailable" if url_statuses == {"unavailable"} else "completed"
+        url_run = _run("URLInvestigation", url_status, started, findings, ["internal_url_scanner"])
+        intel_run = _run(
+            "ThreatIntelligence", intel_status, started, [], sorted(providers_used),
+            "One or more reputation providers were unavailable." if intel_status in {"failed", "timed_out", "unavailable"} else None,
+        )
+        return {"findings": findings, "intel_results": intel_results, "url_scan_results": scan_results, "runs": [url_run, intel_run]}
     with ThreadPoolExecutor(max_workers=max(1, min(6, len(urls)))) as pool:
         reputation_batches = list(pool.map(check_url_reputation, urls))
     for url, reputation_results in zip(urls, reputation_batches, strict=True):
@@ -144,6 +203,7 @@ def url_agent(state: WorkflowState) -> dict:
         "completed" if "completed" in statuses
         else "timed_out" if "timed_out" in statuses
         else "failed" if "failed" in statuses
+        else "unavailable" if "unavailable" in statuses
         else "skipped"
     )
     url_run = _run("URLInvestigation", "completed", started, findings, ["url_structure_check"])
@@ -239,7 +299,7 @@ def finalize(state: WorkflowState) -> dict:
     intel_status = {item["provider"]: item["status"] for item in state.get("intel_results", [])}
     if not intel_status:
         intel_run = next((run for run in state.get("runs", []) if run["agent_name"] == "ThreatIntelligence"), None)
-        if intel_run and intel_run["status"] in {"failed", "timed_out", "skipped"}:
+        if intel_run and intel_run["status"] in {"failed", "timed_out", "unavailable", "skipped"}:
             intel_status = {"providers": intel_run["status"]}
     report = {
         "category": category,
@@ -257,6 +317,7 @@ def finalize(state: WorkflowState) -> dict:
         "agents": state.get("runs", []),
         "urls": state.get("urls", []),
         "threat_intel_results": state.get("intel_results", []),
+        "url_scans": state.get("url_scan_results", []),
         "redactions": state.get("redactions", []),
         "recommendations": state.get("recommendation", []),
         "explanation": state.get("explanation", ""),

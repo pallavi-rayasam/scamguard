@@ -10,7 +10,7 @@ from app.api import routes
 from app.core import security
 from app.db.base import Base
 from app.db.session import get_db
-from app.main import app
+from app.main import RequestGuardMiddleware, app
 
 
 @pytest.fixture
@@ -61,6 +61,31 @@ def test_register_login_and_protected_me_endpoint(client):
     assert client.get("/api/auth/me").status_code == 200
 
 
+def test_protected_me_endpoint_rejects_unauthenticated_access(client):
+    response = client.get("/api/auth/me")
+    assert response.status_code == 401
+
+
+def test_login_rate_limit_returns_429_after_eight_attempts(client):
+    client.get("/health")
+    layer = client.app.middleware_stack
+    guard = None
+    while layer is not None:
+        if isinstance(layer, RequestGuardMiddleware):
+            guard = layer
+            break
+        layer = getattr(layer, "app", None)
+    assert guard is not None
+    guard.events.clear()
+
+    responses = [
+        client.post("/api/auth/login", json={"email": "nobody@example.com", "password": "not-a-valid-password"})
+        for _ in range(9)
+    ]
+    assert [item.status_code for item in responses[:8]] == [403] * 8
+    assert responses[8].status_code == 429
+
+
 def test_mutation_requires_csrf_and_rejects_invalid_input(client):
     csrf = client.get("/api/auth/csrf").json()["csrf_token"]
     client.post(
@@ -97,3 +122,30 @@ def test_investigation_is_persisted_as_redacted_report(client):
     detail = client.get(f"/api/investigations/{report['id']}")
     assert detail.status_code == 200
     assert "123456" not in detail.json()["redacted_content"]
+
+
+def test_unavailable_scanner_status_is_persisted(client, monkeypatch):
+    from app.agents import workflow
+    monkeypatch.setattr(workflow, "settings", replace(workflow.settings, url_scanner_url="http://url-scanner:8001"))
+    monkeypatch.setattr(workflow, "_scan_url_service", lambda _url: {
+        "status": "unavailable", "reason": "scanner_timed_out", "findings": [],
+        "threat_intel_results": [
+            {"provider": "google_safe_browsing", "status": "unavailable", "is_malicious": None, "reason": "scanner_timed_out"},
+            {"provider": "virustotal", "status": "unavailable", "is_malicious": None, "reason": "scanner_timed_out"},
+        ],
+    })
+    csrf = client.get("/api/auth/csrf").json()["csrf_token"]
+    client.post(
+        "/api/auth/register",
+        headers={"X-CSRF-Token": csrf},
+        json={"email":"scanner@example.com", "password":"correct-horse-battery"},
+    )
+    response = client.post(
+        "/api/investigations/text",
+        headers={"X-CSRF-Token": csrf},
+        json={"text":"Review https://example.com", "input_type":"url"},
+    )
+    assert response.status_code == 201
+    report = response.json()
+    assert {item["status"] for item in report["threat_intel_results"]} == {"unavailable"}
+    assert client.get(f"/api/investigations/{report['id']}").status_code == 200

@@ -11,7 +11,7 @@ class EvidenceItem(BaseModel):
 
 
 class AgentResult(BaseModel):
-    status: Literal["completed", "skipped", "failed", "timed_out"]
+    status: Literal["completed", "skipped", "failed", "timed_out", "unavailable"]
     findings: list[dict] = Field(default_factory=list)
     evidence: list[EvidenceItem] = Field(default_factory=list)
     tools_used: list[str] = Field(default_factory=list)

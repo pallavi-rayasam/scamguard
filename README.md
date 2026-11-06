@@ -28,6 +28,8 @@ The API is served at `http://localhost:8000`; OpenAPI docs at `/docs`; the web U
 
 Without Docker, from the repository root run `python -m venv backend/.venv`, activate it, then `pip install -e "backend[dev]"`. Set the values from `.env` in your shell. Change into `backend/`, run `alembic upgrade head`, then `uvicorn app.main:app --reload`. In another terminal, change into `frontend/` and run `npm ci` and `npm run dev`.
 
+For URL scanning outside Compose, also run `pip install -r url_scanner/requirements.txt` and start `uvicorn url_scanner.main:app --host 127.0.0.1 --port 8001` from the repository root. Set `URL_SCANNER_URL=http://localhost:8001` for the backend. Compose starts the scanner on its private service network without publishing port 8001 to the host.
+
 ## Configuration
 
 Secrets belong in environment variables and must never be committed. External threat-intel providers are optional; unconfigured or failed providers must appear as unavailable in reports. The selected provider is OpenAI. LLM explanation calls remain disabled until `OPENAI_API_KEY` is supplied; LLM text is never treated as evidence.

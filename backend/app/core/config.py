@@ -16,6 +16,7 @@ class Settings:
         "postgresql+psycopg://scamguard:replace-me@localhost:5432/scamguard",
     )
     frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+    url_scanner_url: str = os.getenv("URL_SCANNER_URL", "")
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai").lower()
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-6-luna")

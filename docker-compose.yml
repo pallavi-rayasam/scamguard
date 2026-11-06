@@ -7,11 +7,33 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 12
+    restart: unless-stopped
+
+  url-scanner:
+    build:
+      context: .
+      dockerfile: url_scanner/Dockerfile
+    environment:
+      GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
+      URL_SCANNER_CACHE_TTL_SECONDS: ${URL_SCANNER_CACHE_TTL_SECONDS:-300}
+    expose:
+      - "8001"
+    networks:
+      - scanner_internal
+      - scanner_egress
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
     restart: unless-stopped
 
   backend:
@@ -22,10 +44,16 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       FRONTEND_ORIGIN: http://localhost:5173
+      URL_SCANNER_URL: http://url-scanner:8001
+    networks:
+      - app
+      - scanner_internal
     ports:
       - "8000:8000"
     depends_on:
       db:
+        condition: service_healthy
+      url-scanner:
         condition: service_healthy
     restart: unless-stopped
 
@@ -35,6 +63,8 @@ services:
       dockerfile: frontend/Dockerfile
     environment:
       VITE_API_BASE: http://localhost:8000/api
+    networks:
+      - app
     ports:
       - "5173:5173"
     depends_on:
@@ -43,3 +73,11 @@ services:
 
 volumes:
   postgres_data:
+
+networks:
+  app:
+    driver: bridge
+  scanner_internal:
+    internal: true
+  scanner_egress:
+    driver: bridge

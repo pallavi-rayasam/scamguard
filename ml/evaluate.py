@@ -153,7 +153,11 @@ def _external_calls_disabled(enabled: bool) -> Iterator[None]:
         {"provider": "google_safe_browsing", "status": "skipped", "is_malicious": None, "detail": "External lookups disabled for local evaluation."},
         {"provider": "virustotal", "status": "skipped", "is_malicious": None, "detail": "External lookups disabled for local evaluation."},
     ]
-    with patch("app.agents.workflow.check_url_reputation", skipped), patch("app.agents.workflow.get_explanation_provider", lambda: None):
+    from dataclasses import replace
+    from app.agents import workflow
+
+    local_settings = replace(workflow.settings, url_scanner_url="")
+    with patch("app.agents.workflow.settings", local_settings), patch("app.agents.workflow.check_url_reputation", skipped), patch("app.agents.workflow.get_explanation_provider", lambda: None):
         yield
 
 
