@@ -20,10 +20,9 @@ def score_findings(findings: list[dict]) -> tuple[int, str, list[dict]]:
 
 
 def evidence_strength(findings: list[dict]) -> str:
-    verified = sum(1 for item in findings if item.get("verification_level") == "verified")
-    heuristic = sum(1 for item in findings if item.get("verification_level") == "heuristic")
-    if verified >= 1 or heuristic >= 4:
-        return "strong"
-    if heuristic >= 2:
-        return "moderate"
-    return "weak"
+    """Describe corroboration strength; heuristics and LLM output are not verified evidence."""
+    if any(item.get("verification_level") == "verified" for item in findings):
+        return "Strong"
+    if any(item.get("verification_level") == "heuristic" for item in findings):
+        return "Limited"
+    return "Weak"

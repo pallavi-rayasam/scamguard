@@ -31,7 +31,7 @@ class WorkflowState(TypedDict, total=False):
     redacted_text: str
     redactions: list[str]
     urls: list[str]
-    category: str
+    category: str | None
     findings: Annotated[list[dict], operator.add]
     runs: Annotated[list[dict], operator.add]
     intel_results: Annotated[list[dict], operator.add]
@@ -286,16 +286,15 @@ def threat_intelligence_agent(state: WorkflowState) -> dict:
 
     findings = []
     for result in intel_results:
-        if result.get("status") != "completed":
+        if result.get("status") != "completed" or result.get("is_malicious") is not True:
             continue
         provider = result.get("provider", "threat_intel")
-        malicious = result.get("is_malicious")
         findings.append({
-            "indicator": f"threat_intel:{provider}" if malicious is True else f"threat_intel_status:{provider}",
-            "detail": result.get("detail", "Provider returned no known-threat match; this does not establish safety."),
+            "indicator": f"threat_intel:{provider}",
+            "detail": result.get("detail", "Provider confirmed a known-threat match."),
             "verification_level": "verified",
             "source": provider,
-            "score_weight": 40 if malicious is True else 0,
+            "score_weight": 40,
         })
 
     return {
@@ -409,7 +408,7 @@ def explain(state: WorkflowState) -> dict:
 def finalize(state: WorkflowState) -> dict:
     findings = state.get("findings", [])
     category_hits = Counter(item.get("indicator", "").split(":", 1)[1] for item in findings if item.get("indicator", "").startswith("category:"))
-    category = state.get("category", "other_suspicious")
+    category = state.get("category")
     if category_hits:
         category = category_hits.most_common(1)[0][0]
     intel_status = {item["provider"]: item["status"] for item in state.get("intel_results", [])}

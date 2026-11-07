@@ -79,9 +79,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export type User = { id: string; email: string; role: string }
-export type Investigation = { id: string; category: string; risk_score: number; risk_level: string; created_at: string }
+export type Investigation = { id: string; category: string | null; risk_score: number; risk_level: string; created_at: string }
 export type Report = {
-  id: string; category: string; risk_score: number; risk_level: string; score_is_probability: boolean
+  id: string; category: string | null; risk_score: number; risk_level: string; score_is_probability: boolean
   model_confidence: string; evidence_strength: string; findings: Array<Record<string, unknown>>
   evidence: Array<Record<string, unknown>>; agents: Array<Record<string, unknown>>; urls: string[]
   threat_intel_results: Array<{ provider: string; status: string; is_malicious?: boolean | null; reason?: string | null; detail?: string | null }>;
@@ -105,7 +105,7 @@ export const api = {
     return request<{ items: Investigation[] }>(`/investigations${query.size ? `?${query}` : ''}`)
   },
   report: (id: string) => request<Report>(`/investigations/${id}/report`),
-  stats: () => request<{ total_investigations: number; risk_distribution: Record<string, number> }>('/dashboard/statistics'),
+  stats: () => request<{ total_investigations: number; risk_distribution: Record<string, number>; category_distribution: Record<string, number> }>('/dashboard/statistics'),
   categories: () => request<Array<{ code: string; name: string; language: string }>>('/scam-categories'),
   awareness: () => request<{ language: string; items: Array<{ title: string; body: string }> }>('/scam-awareness'),
   feedback: (investigation_id: string, rating: string) => request('/feedback', { method: 'POST', body: JSON.stringify({ investigation_id, rating }) }),

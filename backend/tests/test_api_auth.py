@@ -1,4 +1,6 @@
 from dataclasses import replace
+from datetime import datetime, timezone
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +12,7 @@ from app.api import routes
 from app.core import security
 from app.db.base import Base
 from app.db.session import get_db
+from app.models.entities import Investigation
 from app.main import RequestGuardMiddleware, app
 
 
@@ -32,8 +35,10 @@ def client(monkeypatch):
     monkeypatch.setattr(routes, "settings", test_settings)
     app.dependency_overrides[get_db] = override_db
     with TestClient(app) as test_client:
+        app.state.test_session_factory = testing_session
         yield test_client
     app.dependency_overrides.clear()
+    app.state._state.pop("test_session_factory", None)
     Base.metadata.drop_all(engine)
     engine.dispose()
 
@@ -145,6 +150,55 @@ def test_investigation_is_persisted_as_redacted_report(client):
     assert "123456" not in detail.json()["redacted_content"]
 
 
+def test_unmatched_report_is_uncategorized_and_timestamps_remain_utc(client):
+    csrf = client.get("/api/auth/csrf").json()["csrf_token"]
+    client.post(
+        "/api/auth/register",
+        headers={"X-CSRF-Token": csrf},
+        json={"email": "uncategorized@example.com", "password": "correct-horse-battery"},
+    )
+    response = client.post(
+        "/api/investigations/text",
+        headers={"X-CSRF-Token": csrf},
+        json={"text": "Hi, are we meeting at 5pm?", "input_type": "text"},
+    )
+
+    assert response.status_code == 201
+    report = response.json()
+    assert report["risk_score"] == 0
+    assert report["risk_level"] == "Low"
+    assert report["category"] is None
+    assert report["created_at"].endswith(("Z", "+00:00"))
+    response_time = datetime.fromisoformat(report["created_at"])
+
+    with client.app.state.test_session_factory() as db:
+        saved = db.get(Investigation, UUID(report["id"]))
+        assert saved is not None
+        assert saved.category is None
+        # SQLite stores this UTC value without timezone metadata; the API restores UTC.
+        assert saved.created_at.tzinfo is None
+        assert saved.created_at.replace(tzinfo=timezone.utc) == response_time
+
+    history = client.get("/api/investigations").json()["items"]
+    assert history[0]["category"] is None
+    assert history[0]["created_at"].endswith(("Z", "+00:00"))
+    stats = client.get("/api/dashboard/statistics").json()
+    assert stats["category_distribution"] == {}
+    stored_report = client.get(f"/api/investigations/{report['id']}/report")
+    assert stored_report.json()["category"] is None
+    assert stored_report.json()["created_at"].endswith(("Z", "+00:00"))
+
+    scam = client.post(
+        "/api/investigations/text",
+        headers={"X-CSRF-Token": csrf},
+        json={"text": "Your KYC will expire. Complete KYC immediately or your account will be blocked.", "input_type": "text"},
+    )
+    assert scam.status_code == 201
+    assert scam.json()["category"] == "fake_kyc"
+    stats = client.get("/api/dashboard/statistics").json()
+    assert stats["category_distribution"] == {"fake_kyc": 1}
+
+
 def test_unavailable_scanner_status_is_persisted(client, monkeypatch):
     from app.agents import workflow
     monkeypatch.setattr(workflow, "settings", replace(workflow.settings, url_scanner_url="http://url-scanner:8001"))
@@ -164,9 +218,11 @@ def test_unavailable_scanner_status_is_persisted(client, monkeypatch):
     response = client.post(
         "/api/investigations/text",
         headers={"X-CSRF-Token": csrf},
-        json={"text":"Review https://example.com", "input_type":"url"},
+        json={"text":"Your account will be blocked immediately. Transfer the amount now at https://example.com", "input_type":"url"},
     )
     assert response.status_code == 201
     report = response.json()
     assert {item["status"] for item in report["threat_intel_results"]} == {"unavailable"}
+    assert report["evidence_strength"] == "Limited"
+    assert {item["verification_level"] for item in report["findings"]} == {"heuristic"}
     assert client.get(f"/api/investigations/{report['id']}").status_code == 200
