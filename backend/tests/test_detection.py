@@ -22,6 +22,12 @@ def test_classification_uses_seeded_indian_scam_patterns():
     assert result["findings"]
 
 
+def test_classification_leaves_unmatched_harmless_text_uncategorized():
+    result = classify_message("Hi, are we meeting at 5pm?")
+    assert result["category"] is None
+    assert result["findings"] == []
+
+
 def test_weighted_score_thresholds_are_deterministic():
     findings = [
         {"indicator":"otp_request", "score_weight":32},

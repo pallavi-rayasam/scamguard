@@ -17,6 +17,13 @@ from app.schemas.common import ConversationRequest, FeedbackRequest, Investigati
 router = APIRouter(prefix="/api")
 
 
+def _utc_timestamp(value: datetime) -> datetime:
+    """SQLite returns stored UTC timestamps without tzinfo; expose them as UTC."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _set_session(response: Response, user: User) -> None:
     token = issue_access_token(user.id)
     response.set_cookie("scamguard_session", token, httponly=True, secure=settings.cookie_secure, samesite="lax", max_age=8 * 60 * 60, path="/")
@@ -131,7 +138,7 @@ def _persist_investigation(report: dict, submitted_text: str, input_type: str, d
     db.add(AuditLog(actor_id=user.id, event="investigation.created", metadata_json={"investigation_id": str(investigation.id), "input_type": input_type}))
     db.commit()
     db.refresh(investigation)
-    return {"id": investigation.id, **report, "created_at": investigation.created_at}
+    return {"id": investigation.id, **report, "created_at": _utc_timestamp(investigation.created_at)}
 
 
 @router.post("/investigations/text", status_code=status.HTTP_201_CREATED)
@@ -202,7 +209,7 @@ def list_investigations(
     if risk_level:
         statement = statement.where(Investigation.risk_level == risk_level)
     rows = db.scalars(statement.order_by(Investigation.created_at.desc()).limit(limit).offset(offset)).all()
-    return {"items": [{"id": row.id, "category": row.category, "risk_score": row.risk_score, "risk_level": row.risk_level, "created_at": row.created_at} for row in rows], "limit": limit, "offset": offset}
+    return {"items": [{"id": row.id, "category": row.category, "risk_score": row.risk_score, "risk_level": row.risk_level, "created_at": _utc_timestamp(row.created_at)} for row in rows], "limit": limit, "offset": offset}
 
 
 def _owned_investigation(investigation_id: UUID, user: User, db: Session) -> Investigation:
@@ -215,19 +222,19 @@ def _owned_investigation(investigation_id: UUID, user: User, db: Session) -> Inv
 @router.get("/investigations/{investigation_id}")
 def get_investigation(investigation_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     row = _owned_investigation(investigation_id, user, db)
-    return {"id": row.id, "created_at": row.created_at, "redacted_content": row.redacted_content, **row.report_json}
+    return {"id": row.id, "created_at": _utc_timestamp(row.created_at), "redacted_content": row.redacted_content, **row.report_json, "category": row.category}
 
 
 @router.get("/investigations/{investigation_id}/report")
 def get_report(investigation_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     row = _owned_investigation(investigation_id, user, db)
-    return {"id": row.id, "created_at": row.created_at, **row.report_json}
+    return {"id": row.id, "created_at": _utc_timestamp(row.created_at), **row.report_json, "category": row.category}
 
 
 @router.get("/investigations/{investigation_id}/status")
 def investigation_status(investigation_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     row = _owned_investigation(investigation_id, user, db)
-    return {"id": row.id, "status": "completed", "created_at": row.created_at}
+    return {"id": row.id, "status": "completed", "created_at": _utc_timestamp(row.created_at)}
 
 
 @router.delete("/investigations/{investigation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -271,7 +278,20 @@ def submit_feedback(payload: FeedbackRequest, request: Request, user: User = Dep
 def dashboard_statistics(user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     count = db.scalar(select(func.count()).select_from(Investigation).where(Investigation.user_id == user.id)) or 0
     by_risk = db.execute(select(Investigation.risk_level, func.count()).where(Investigation.user_id == user.id).group_by(Investigation.risk_level)).all()
-    return {"total_investigations": count, "risk_distribution": {key: value for key, value in by_risk}}
+    by_category = db.execute(
+        select(Investigation.category, func.count())
+        .where(
+            Investigation.user_id == user.id,
+            Investigation.category.is_not(None),
+            Investigation.category != "other_suspicious",
+        )
+        .group_by(Investigation.category)
+    ).all()
+    return {
+        "total_investigations": count,
+        "risk_distribution": {key: value for key, value in by_risk},
+        "category_distribution": {key: value for key, value in by_category},
+    }
 
 
 @router.get("/scam-categories")

@@ -47,7 +47,7 @@ def classify_message(text: str) -> dict:
         for phrase in category.get("patterns", []):
             if phrase.lower() in lowered:
                 category_hits[category["code"]] += 1
-    category = category_hits.most_common(1)[0][0] if category_hits else "other_suspicious"
+    category = category_hits.most_common(1)[0][0] if category_hits else None
 
     findings = list(matched_indicators)
     for code, count in category_hits.items():

@@ -266,16 +266,59 @@ def test_llm_provider_setup_failure_falls_back_to_deterministic_report(monkeypat
     assert "private provider setup detail" not in str(report)
 
 
-def test_llm_inferred_findings_do_not_increase_evidence_strength():
+def test_evidence_strength_has_verified_limited_and_weak_levels():
     from app.detection.scoring import evidence_strength
 
-    two_heuristics = [
+    assert evidence_strength([]) == "Weak"
+    assert evidence_strength([{"verification_level": "llm_inferred"}]) == "Weak"
+    assert evidence_strength([{"verification_level": "heuristic"}]) == "Limited"
+    assert evidence_strength([
         {"verification_level": "heuristic"},
         {"verification_level": "heuristic"},
-    ]
-    assert evidence_strength(two_heuristics) == "moderate"
-    assert evidence_strength(two_heuristics + [{"verification_level": "llm_inferred"}]) == "moderate"
-    assert evidence_strength([{"verification_level": "llm_inferred"}]) == "weak"
+        {"verification_level": "llm_inferred"},
+    ]) == "Limited"
+    assert evidence_strength([{"verification_level": "verified"}]) == "Strong"
+    assert evidence_strength([
+        {"verification_level": "verified"},
+        {"verification_level": "heuristic"},
+    ]) == "Strong"
+
+
+def test_harmless_message_has_no_scam_category_or_evidence():
+    report = investigate("Hi, are we meeting at 5pm?", "text")
+
+    assert report["risk_score"] == 0
+    assert report["risk_level"] == "Low"
+    assert report["category"] is None
+    assert report["evidence_strength"] == "Weak"
+
+
+def test_confirmed_malicious_provider_finding_is_strong(monkeypatch):
+    from app.agents import workflow
+
+    monkeypatch.setattr(workflow, "check_url_reputation", lambda _url: [{
+        "provider": "google_safe_browsing",
+        "status": "completed",
+        "is_malicious": True,
+        "detail": "Provider confirmed a known threat.",
+    }])
+    report = investigate("Review https://example.com", "url")
+    assert report["evidence_strength"] == "Strong"
+    assert any(item["verification_level"] == "verified" for item in report["findings"])
+
+
+def test_clean_provider_result_does_not_upgrade_heuristic_findings(monkeypatch):
+    from app.agents import workflow
+
+    monkeypatch.setattr(workflow, "check_url_reputation", lambda _url: [{
+        "provider": "google_safe_browsing",
+        "status": "completed",
+        "is_malicious": False,
+        "detail": "No known threat found; not verified safe.",
+    }])
+    report = investigate("Your account will be blocked immediately; transfer the amount at https://example.com", "url")
+    assert report["evidence_strength"] == "Limited"
+    assert all(item["verification_level"] == "heuristic" for item in report["findings"])
 
 def test_url_and_threat_intel_agents_call_separate_scanner_endpoints(monkeypatch):
     from dataclasses import replace

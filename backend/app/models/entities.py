@@ -37,7 +37,7 @@ class Investigation(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     input_type: Mapped[str] = mapped_column(String(32), nullable=False)
     redacted_content: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped[str] = mapped_column(String(64), default="other_suspicious", nullable=False)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     risk_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     risk_level: Mapped[str] = mapped_column(String(16), default="Low", nullable=False)
     report_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)

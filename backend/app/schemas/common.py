@@ -59,7 +59,7 @@ class FeedbackRequest(BaseModel):
 
 class InvestigationSummary(BaseModel):
     id: UUID
-    category: str
+    category: str | None
     risk_score: int
     risk_level: str
     created_at: datetime

@@ -30,11 +30,13 @@ Investigation input types currently accepted: `text`, `sms`, `whatsapp`, `url`, 
 
 ## Report shape
 
-Reports include `category`, deterministic `risk_score`, `risk_level`, `score_is_probability: false`, `model_confidence`, `evidence_strength`, `data_availability`, `findings`, `evidence`, `agents`, `urls`, `url_scans`, `threat_intel_results`, `redactions`, `recommendations`, `explanation`, and `limitations`. Agent status is one of `completed`, `skipped`, `failed`, or `timed_out`. Provider results may separately be `unavailable`. Every agent record includes `duration_ms`, `tools_used`, and `error`. Evidence carries a source, timestamp, detail, and verification level.
+Reports include nullable `category`, deterministic `risk_score`, `risk_level`, `score_is_probability: false`, `model_confidence`, `evidence_strength`, `data_availability`, `findings`, `evidence`, `agents`, `urls`, `url_scans`, `threat_intel_results`, `redactions`, `recommendations`, `explanation`, and `limitations`. When no seeded scam category matches, `category` is null and the UI says “No scam pattern detected.” Evidence-strength labels are Strong (a verified finding), Limited (heuristic findings only), and Weak (no verified or heuristic findings); LLM-inferred findings do not count. Agent status is one of `completed`, `skipped`, `failed`, or `timed_out`. Provider results may separately be `unavailable`. Every agent record includes `duration_ms`, `tools_used`, and `error`. Evidence carries a source, UTC timestamp, detail, and verification level. API `created_at` timestamps include UTC offset; clients render them in local time.
 
 The internal URL scanner service exposes `GET /health` and `POST /scan` on port 8001 within the Compose network. It is not published to the host. `POST /scan` accepts one HTTP(S) URL, validates public DNS answers and pins the connection before a HEAD request. A capped GET is used only when HEAD is unsupported and the declared content type is text. It does not return page content or execute scripts. Provider lookups receive only the validated origin and return `unavailable` when unconfigured, timed out, failed, or rate-limited.
 
 The score thresholds are Low `0–24`, Moderate `25–49`, High `50–74`, Critical `75–100`. A provider's negative or missing match is never presented as proof of safety.
+
+`GET /api/dashboard/statistics` includes `category_distribution` from persisted rows with a matched scam category. Null categories and the legacy `other_suspicious` placeholder are excluded.
 
 ## Not implemented yet
 
