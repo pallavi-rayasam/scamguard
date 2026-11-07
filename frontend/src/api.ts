@@ -1,23 +1,81 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000/api'
 let csrfToken = ''
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const method = options.method ?? 'GET'
-  const headers = new Headers(options.headers)
-  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
-    if (!csrfToken) {
-      const token = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'include' })
-      if (!token.ok) throw new Error('Could not establish a secure session. Please retry.')
-      csrfToken = (await token.json()).csrf_token as string
-    }
-    headers.set('X-CSRF-Token', csrfToken)
+export const REQUEST_TIMEOUT_MS = 15_000
+
+type ApiFieldErrors = Record<string, string>
+type ValidationIssue = { loc?: unknown; type?: unknown; msg?: unknown; ctx?: unknown }
+
+export class ApiError extends Error {
+  constructor(message: string, readonly fieldErrors: ApiFieldErrors = {}) {
+    super(message)
+    this.name = 'ApiError'
   }
-  const response = await fetch(`${API_BASE}${path}`, { ...options, method, headers, credentials: 'include' })
-  if (response.status === 204) return undefined as T
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.detail ?? 'Request failed. Please try again.')
-  return data as T
+}
+
+function validationField(issue: ValidationIssue): string {
+  if (!Array.isArray(issue.loc)) return 'request'
+  const parts = issue.loc.filter((part): part is string => typeof part === 'string' && part !== 'body' && part !== 'query')
+  return parts[0] ?? 'request'
+}
+
+function validationMessage(field: string, issue: ValidationIssue): string {
+  const type = String(issue.type ?? '')
+  const context = typeof issue.ctx === 'object' && issue.ctx !== null ? issue.ctx as Record<string, unknown> : {}
+  if (type === 'string_too_short' && typeof context.min_length === 'number') return `must be at least ${context.min_length} characters`
+  if (type === 'string_too_long' && typeof context.max_length === 'number') return `must be at most ${context.max_length} characters`
+  if (type === 'missing') return 'is required'
+  if (field === 'email' && type.includes('value_error')) return 'must be a valid email address'
+  const message = typeof issue.msg === 'string' ? issue.msg : 'is invalid'
+  return message.replace(/^value error,\s*/i, '').replace(/^field required$/i, 'is required')
+}
+
+function apiError(detail: unknown, status: number): ApiError {
+  if (typeof detail === 'string' && detail.trim()) return new ApiError(detail)
+  if (Array.isArray(detail)) {
+    const fields: ApiFieldErrors = {}
+    for (const rawIssue of detail) {
+      if (typeof rawIssue !== 'object' || rawIssue === null) continue
+      const issue = rawIssue as ValidationIssue
+      const field = validationField(issue)
+      const message = validationMessage(field, issue)
+      fields[field] = fields[field] ? `${fields[field]}; ${message}` : message
+    }
+    const readable = Object.entries(fields).map(([field, message]) => `${field}: ${message}`).join('; ')
+    if (readable) return new ApiError(readable, fields)
+  }
+  return new ApiError(`Request failed (HTTP ${status}).`)
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const controller = new AbortController()
+  const timeout = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    const method = options.method ?? 'GET'
+    const headers = new Headers(options.headers)
+    if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
+      if (!csrfToken) {
+        const token = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'include', signal: controller.signal })
+        if (!token.ok) throw new Error('Could not establish a secure session. Please retry.')
+        csrfToken = (await token.json()).csrf_token as string
+      }
+      headers.set('X-CSRF-Token', csrfToken)
+    }
+    const response = await fetch(`${API_BASE}${path}`, { ...options, method, headers, credentials: 'include', signal: controller.signal })
+    if (response.status === 204) return undefined as T
+    const data = await response.json().catch(caught => {
+      if (controller.signal.aborted) throw caught
+      return {}
+    })
+    if (!response.ok) throw apiError(data.detail, response.status)
+    return data as T
+  } catch (caught) {
+    if (controller.signal.aborted) throw new Error('Request timed out after 15 seconds. Please try again.')
+    throw caught
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
 }
 
 export type User = { id: string; email: string; role: string }
