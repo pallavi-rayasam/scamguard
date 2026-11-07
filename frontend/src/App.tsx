@@ -1,4 +1,4 @@
-import { Component, createContext, useContext, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react'
+import { Component, createContext, useContext, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react'
 import {
   ArrowRight, BookOpen, CheckCircle2, ChevronRight, CircleAlert, ClipboardList, LayoutDashboard,
   LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquareWarning, ScanLine, Search, Settings,
@@ -76,16 +76,73 @@ function LoginPage({ navigate }: { navigate: (page: Page) => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<'email' | 'password', string>>>({})
   const [busy, setBusy] = useState(false)
-  async function submit(event: React.FormEvent) {
-    event.preventDefault(); setError(''); setBusy(true)
-    try { const user = mode === 'login' ? await api.login(email, password) : await api.register(email, password); setUser(user); navigate('dashboard') }
-    catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not sign in. Please retry.') }
-    finally { setBusy(false) }
+  const emailRef = useRef<HTMLInputElement>(null)
+
+  function clearFieldError(field: 'email' | 'password') {
+    setFieldErrors(current => {
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
   }
+
+  function validate(): Partial<Record<'email' | 'password', string>> {
+    const issues: Partial<Record<'email' | 'password', string>> = {}
+    const normalizedEmail = email.trim()
+    const at = normalizedEmail.lastIndexOf('@')
+    const domain = at >= 0 ? normalizedEmail.slice(at + 1) : ''
+    if (!normalizedEmail) issues.email = 'Email is required.'
+    else if (Array.from(normalizedEmail).length > 254) issues.email = 'Email must be at most 254 characters.'
+    else if (!emailRef.current?.validity.valid || at <= 0 || !domain.includes('.') || domain.startsWith('.') || domain.endsWith('.') || domain.includes('..')) {
+      issues.email = 'Enter a valid email address, such as name@example.com.'
+    }
+
+    const passwordLength = Array.from(password).length
+    if (!passwordLength) issues.password = 'Password is required.'
+    else if (passwordLength > 128) issues.password = 'Password must be at most 128 characters.'
+    else if (mode === 'register' && passwordLength < 12) issues.password = 'Password must be at least 12 characters.'
+    return issues
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setError('')
+    const validationErrors = validate()
+    setFieldErrors(validationErrors)
+    if (Object.keys(validationErrors).length) return
+
+    setBusy(true)
+    try {
+      const user = mode === 'login'
+        ? await api.login(email.trim(), password)
+        : await api.register(email.trim(), password)
+      setUser(user)
+      navigate('dashboard')
+    } catch (caught) {
+      if (typeof caught === 'object' && caught !== null && 'fieldErrors' in caught) {
+        const apiFields = (caught as { fieldErrors?: Partial<Record<'email' | 'password', string>> }).fieldErrors
+        setFieldErrors(apiFields ?? {})
+      }
+      setError(caught instanceof Error ? caught.message : 'Could not complete the request. Please retry.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return <main className="center-page"><div className="auth-card"><button className="back-link" onClick={() => navigate('home')}>← Back</button><Brand /><div className="auth-heading"><span className="eyebrow">Investigation workspace</span><h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1><p>Your reports stay private to your account.</p></div>
-    <form onSubmit={submit} className="form-stack"><label>Email<input type="email" autoComplete="email" required value={email} onChange={event => setEmail(event.target.value)} placeholder="you@example.com" /></label><label>Password<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={mode === 'register' ? 12 : 1} maxLength={128} required value={password} onChange={event => setPassword(event.target.value)} placeholder={mode === 'register' ? 'At least 12 characters' : 'Your password'} /></label>{error && <div className="error-message"><CircleAlert size={16} />{error}</div>}<button className="button button-full" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : mode === 'login' ? 'Sign in securely' : 'Create account'}</button></form>
-    <p className="switch-mode">{mode === 'login' ? 'New to ScamGuard?' : 'Already have an account?'} <button className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>{mode === 'login' ? 'Create account' : 'Sign in'}</button></p><div className="privacy-box"><LockKeyhole size={15} /><span>Never enter an OTP, UPI PIN, password, or full card number into an investigation.</span></div></div></main>
+    <form onSubmit={submit} className="form-stack" noValidate>
+      <label>Email<input ref={emailRef} type="email" autoComplete="email" required value={email} onChange={event => { setEmail(event.target.value); clearFieldError('email') }} placeholder="you@example.com" aria-invalid={Boolean(fieldErrors.email)} aria-describedby={fieldErrors.email ? 'email-hint email-error' : 'email-hint'} /></label>
+      <small id="email-hint" className="field-hint">Use a valid email address with a dotted domain, up to 254 characters.</small>
+      {fieldErrors.email && <small id="email-error" className="field-error" role="alert">{fieldErrors.email}</small>}
+      <label>Password<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required value={password} onChange={event => { setPassword(event.target.value); clearFieldError('password') }} placeholder={mode === 'register' ? 'At least 12 characters' : 'Your password'} aria-invalid={Boolean(fieldErrors.password)} aria-describedby={fieldErrors.password ? 'password-hint password-error' : 'password-hint'} /></label>
+      <small id="password-hint" className="field-hint">{mode === 'register' ? 'Use 12–128 characters.' : 'Use 1–128 characters.'}</small>
+      {fieldErrors.password && <small id="password-error" className="field-error" role="alert">{fieldErrors.password}</small>}
+      {error && <div className="error-message" role="alert"><CircleAlert size={16} />{error}</div>}
+      <button className="button button-full" disabled={busy} aria-busy={busy}>{busy ? <><LoaderCircle className="spin" size={17} />{mode === 'register' ? 'Creating account…' : 'Signing in…'}</> : mode === 'login' ? 'Sign in securely' : 'Create account'}</button>
+    </form>
+    <p className="switch-mode">{mode === 'login' ? 'New to ScamGuard?' : 'Already have an account?'} <button className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setFieldErrors({}) }}>{mode === 'login' ? 'Create account' : 'Sign in'}</button></p><div className="privacy-box"><LockKeyhole size={15} /><span>Never enter an OTP, UPI PIN, password, or full card number into an investigation.</span></div></div></main>
 }
 
 const navItems: Array<{ page: Page; label: string; icon: ReactNode }> = [

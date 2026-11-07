@@ -21,7 +21,7 @@ Statuses: `done` means the artifact exists; `not verified` means it has not been
 | Evaluation harness | Pass | Loader requires text/label/category/source/author/split; exact and near-duplicate test/train leakage checks; 2,000 bootstrap 95% CIs; stratified 5-fold CV on train+validation; current data size 32; see `docs/testing/evaluation-report.md`. |
 | OCR, PDF export, admin replay | planned | Tier 2 work |
 | Backend, evaluation, and URL scanner tests | Pass | `154 passed in 12.11s` with the project `.venv` Python 3.12.0; see `docs/testing/test-report.md`. |
-| Frontend tests/build | Pass | `6 passed` across 2 Vitest files; production build succeeded with the existing >500 kB chunk warning. URL report tests cover all failed, one failed, flagged, clean, and rate-limited states. |
+| Frontend tests/build | Pass | `12 passed` across 3 Vitest files; production build succeeded with the existing >500 kB chunk warning. Includes URL-provider and auth validation, timeout, and loading-reset cases. |
 | Docker/PostgreSQL deployment | not verified | Docker is unavailable; PostgreSQL service/migrations not run |
 | GitHub remote/push | blocked | repository URL not provided |
 | `feature/evaluation` | Pass | Commit `fa938c3` was merged into `develop` |
@@ -29,3 +29,4 @@ Statuses: `done` means the artifact exists; `not verified` means it has not been
 | `feature/transaction-conversation` | Pass | Focused transaction/conversation suite: 62 passed (15 scam + 15 legitimate transaction examples; 15 scam + 17 legitimate conversation examples). Full backend suite: 148 passed in 10.16s using `.venv` Python 3.12. Frontend suite: 1 passed; production build succeeded. Includes genuine bill reminder false-positive checks. |
 | `feature/evaluation-v2` | Pass | Focused evaluation suite: 12 passed; full backend suite: 154 passed. Seed-42 test messages unchanged; dataset remains 32 rows. Evaluation report contains held-out metrics with 95% bootstrap CIs and 5-fold train+validation CV; LLM-only skipped because no key is configured. `backend/pyproject.toml` declares `langgraph` and `scikit-learn`. |
 | `feature/frontend-url-results` | Pass | Vitest: 6 passed across 2 files; production build succeeded (634.96 kB JS chunk, size warning). Report renders provider statuses, verified/heuristic badges, and `no known threat found; not verified safe` for checked clean results. |
+| `feature/auth-error-messages` | Pass | TestClient reproduction returned 422 for the browser-accepted address `member@localhost`; `loc=[body,email]`. Form payload keys match the backend. Vitest: 12 passed across 3 files; includes readable 422 errors, 15-second abort, client rules, and finally-reset loading behavior. |
