@@ -282,3 +282,56 @@ def test_scanner_service_rate_limits_requests_from_one_client():
         statuses = [client.post("/scan", json={"url": "http://127.0.0.1/"}).status_code for _ in range(31)]
     assert statuses[:30] == [200] * 30
     assert statuses[30] == 429
+
+def test_analyze_endpoint_does_not_query_reputation_providers(monkeypatch):
+    target = type("Target", (), {"origin": "https://example.com"})()
+    monkeypatch.setattr(main, "validate_target", lambda _: target)
+    monkeypatch.setattr(
+        main,
+        "safe_fetch",
+        lambda _url, method, **kwargs: SafeFetchResult("completed", target.origin, 200, "text/html", 0, False, 0),
+    )
+    monkeypatch.setattr(
+        main,
+        "check_reputation",
+        lambda _: (_ for _ in ()).throw(AssertionError("analysis node must not query reputation")),
+    )
+
+    result = main.analyze(main.ScanRequest(url="https://example.com/"))
+
+    assert result["status"] == "completed"
+    assert result["origin"] == target.origin
+    assert result["threat_intel_results"] == []
+
+
+def test_reputation_endpoint_revalidates_before_provider_lookup(monkeypatch):
+    target = type("Target", (), {"origin": "https://example.com"})()
+    queried = []
+    monkeypatch.setattr(main, "validate_target", lambda url: target)
+    monkeypatch.setattr(main, "check_reputation", lambda origin: (
+        queried.append(origin) or [{"provider": "google_safe_browsing", "status": "unavailable", "is_malicious": None}]
+    ))
+
+    result = main.reputation(main.ScanRequest(url="https://example.com/"))
+
+    assert queried == [target.origin]
+    assert result["status"] == "completed"
+    assert result["threat_intel_results"][0]["status"] == "unavailable"
+
+
+def test_reputation_endpoint_blocks_private_target_before_provider_lookup(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "validate_target",
+        lambda _url: (_ for _ in ()).throw(SSRFBlocked("non_public_address")),
+    )
+    monkeypatch.setattr(
+        main,
+        "check_reputation",
+        lambda _: (_ for _ in ()).throw(AssertionError("private target must not be queried")),
+    )
+
+    result = main.reputation(main.ScanRequest(url="http://127.0.0.1/"))
+
+    assert result["status"] == "blocked"
+    assert all(item["status"] == "unavailable" for item in result["threat_intel_results"])

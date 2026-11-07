@@ -99,7 +99,7 @@ def route_agents(state: WorkflowState) -> list[str]:
 
 def _scan_url_service(url: str) -> dict:
     """Call the internal URL scanner without following its redirects at the HTTP layer."""
-    endpoint = settings.url_scanner_url.rstrip("/") + "/scan"
+    endpoint = settings.url_scanner_url.rstrip("/") + "/analyze"
     try:
         with httpx.Client(timeout=60.0, follow_redirects=False) as client:
             response = client.post(endpoint, json={"url": url})
@@ -129,6 +129,41 @@ def _scan_url_service(url: str) -> dict:
     }
 
 
+def _query_url_reputation_service(url: str) -> dict:
+    """Ask the scanner's reputation stage to revalidate and query provider results."""
+    endpoint = settings.url_scanner_url.rstrip("/") + "/reputation"
+    providers = ("google_safe_browsing", "virustotal")
+    try:
+        with httpx.Client(timeout=15.0, follow_redirects=False) as client:
+            response = client.post(endpoint, json={"url": url})
+        if response.status_code == 429:
+            reason = "scanner_rate_limited"
+            return {
+                "status": "unavailable",
+                "reason": reason,
+                "threat_intel_results": [
+                    {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason}
+                    for provider in providers
+                ],
+            }
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict) or result.get("status") not in {"completed", "blocked", "unavailable"}:
+            raise ValueError("Invalid scanner reputation response")
+        return result
+    except httpx.TimeoutException:
+        reason = "scanner_timed_out"
+    except (httpx.HTTPError, ValueError):
+        reason = "scanner_unavailable"
+    return {
+        "status": "unavailable",
+        "reason": reason,
+        "threat_intel_results": [
+            {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason}
+            for provider in providers
+        ],
+    }
+
 def message_agent(state: WorkflowState) -> dict:
     started = time.monotonic()
     result = classify_message(state.get("normalized_text", ""))
@@ -137,79 +172,132 @@ def message_agent(state: WorkflowState) -> dict:
 
 
 def url_agent(state: WorkflowState) -> dict:
+    """Inspect URL structure and run the SSRF-guarded URL analysis stage."""
     started = time.monotonic()
-    findings: list[dict] = []
-    intel_results: list[dict] = []
-    providers_used: set[str] = set()
     urls = state.get("urls", [])
     if not urls:
         return {
-            "runs": [
-                _run("URLInvestigation", "skipped", started, [], [], "No URL extracted."),
-                _run("ThreatIntelligence", "skipped", started, [], [], "No URL was available for lookup."),
-            ]
+            "url_scan_results": [],
+            "runs": [_run("URLInvestigation", "skipped", started, [], [], "No URL extracted.")],
         }
+
+    findings: list[dict] = []
+    scan_results: list[dict] = []
+    tools = ["url_structure_check"]
+    status = "completed"
+    error = None
     if settings.url_scanner_url:
+        tools.append("internal_url_scanner")
         with ThreadPoolExecutor(max_workers=max(1, min(6, len(urls)))) as pool:
             scan_results = list(pool.map(_scan_url_service, urls))
         for result in scan_results:
             findings.extend(result.get("findings", []))
-            intel_results.extend(result.get("threat_intel_results", []))
-            for item in result.get("threat_intel_results", []):
-                if item.get("status") in {"completed", "failed", "timed_out", "unavailable"}:
-                    providers_used.add(item["provider"])
-        statuses = {item["status"] for item in intel_results}
-        intel_status = (
-            "completed" if "completed" in statuses
-            else "timed_out" if "timed_out" in statuses
-            else "failed" if "failed" in statuses
-            else "unavailable" if "unavailable" in statuses
-            else "skipped"
-        )
-        url_statuses = {item.get("status") for item in scan_results}
-        url_status = "unavailable" if url_statuses == {"unavailable"} else "completed"
-        url_run = _run("URLInvestigation", url_status, started, findings, ["internal_url_scanner"])
-        intel_run = _run(
-            "ThreatIntelligence", intel_status, started, [], sorted(providers_used),
-            "One or more reputation providers were unavailable." if intel_status in {"failed", "timed_out", "unavailable"} else None,
-        )
-        return {"findings": findings, "intel_results": intel_results, "url_scan_results": scan_results, "runs": [url_run, intel_run]}
-    with ThreadPoolExecutor(max_workers=max(1, min(6, len(urls)))) as pool:
-        reputation_batches = list(pool.map(check_url_reputation, urls))
-    for url, reputation_results in zip(urls, reputation_batches, strict=True):
-        findings.extend(inspect_url(url))
-        for result in reputation_results:
-            intel_results.append(result)
-            if result["status"] in ("completed", "failed", "timed_out"):
-                providers_used.add(result["provider"])
-            if result.get("is_malicious") is True:
-                findings.append({
-                    "indicator": f"threat_intel:{result['provider']}",
-                    "detail": result["detail"],
-                    "verification_level": "verified",
-                    "source": result["provider"],
-                    "score_weight": 40,
-                })
-            elif result["status"] == "completed":
-                findings.append({
-                    "indicator": f"threat_intel_status:{result['provider']}",
-                    "detail": result["detail"],
-                    "verification_level": "verified",
-                    "source": result["provider"],
-                    "score_weight": 0,
-                })
-    statuses = {item["status"] for item in intel_results}
-    intel_status = (
-        "completed" if "completed" in statuses
-        else "timed_out" if "timed_out" in statuses
-        else "failed" if "failed" in statuses
-        else "unavailable" if "unavailable" in statuses
-        else "skipped"
-    )
-    url_run = _run("URLInvestigation", "completed", started, findings, ["url_structure_check"])
-    intel_run = _run("ThreatIntelligence", intel_status, started, [], sorted(providers_used), "Provider status is visible in the report." if intel_status in {"failed", "timed_out"} else None)
-    return {"findings": findings, "intel_results": intel_results, "runs": [url_run, intel_run]}
+        if scan_results and all(result.get("status") == "unavailable" for result in scan_results):
+            reasons = {result.get("reason", "scanner_unavailable") for result in scan_results}
+            if any("timed_out" in reason or "timeout" in reason for reason in reasons):
+                status, error = "timed_out", "The URL scanner timed out."
+            else:
+                status, error = "failed", "The URL scanner was unavailable."
+    else:
+        for url in urls:
+            findings.extend(inspect_url(url))
 
+    return {
+        "findings": findings,
+        "url_scan_results": scan_results,
+        "runs": [_run("URLInvestigation", status, started, findings, tools, error)],
+    }
+
+
+def _provider_results_from_scan(scan_result: dict) -> list[dict]:
+    results = scan_result.get("threat_intel_results", [])
+    if results:
+        return results
+    reason = scan_result.get("reason", "target_not_publicly_validated")
+    return [
+        {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason}
+        for provider in ("google_safe_browsing", "virustotal")
+    ]
+
+
+def threat_intelligence_agent(state: WorkflowState) -> dict:
+    """Query and reconcile reputation outcomes as a separate graph node."""
+    started = time.monotonic()
+    urls = state.get("urls", [])
+    if not urls:
+        return {"runs": [_run("ThreatIntelligence", "skipped", started, [], [], "No URL was available for lookup.")]}
+
+    scan_results = state.get("url_scan_results", [])
+    if settings.url_scanner_url:
+        if not scan_results:
+            return {
+                "runs": [_run("ThreatIntelligence", "skipped", started, [], [], "No safe URL analysis result was available for reputation lookup.")],
+            }
+        def query_scan_result(scan_result: dict) -> dict:
+            origin = scan_result.get("origin")
+            if not origin:
+                return {"threat_intel_results": _provider_results_from_scan(scan_result)}
+            return _query_url_reputation_service(origin)
+
+        with ThreadPoolExecutor(max_workers=max(1, min(6, len(scan_results)))) as pool:
+            reputation_batches = list(pool.map(query_scan_result, scan_results))
+        intel_results = [
+            item
+            for batch in reputation_batches
+            for item in batch.get("threat_intel_results", [])
+        ]
+    else:
+        with ThreadPoolExecutor(max_workers=max(1, min(6, len(urls)))) as pool:
+            reputation_batches = list(pool.map(check_url_reputation, urls))
+        intel_results = [item for batch in reputation_batches for item in batch]
+
+    provider_statuses = {item.get("status") for item in intel_results}
+    reasons = {item.get("reason", "") for item in intel_results}
+    tools = sorted({
+        item["provider"]
+        for item in intel_results
+        if item.get("provider") and item.get("status") != "skipped"
+    })
+    safe_skip_reasons = {
+        "not_configured",
+        "target_not_publicly_validated",
+        "redirect_target_not_public",
+    }
+    if not intel_results or provider_statuses <= {"skipped"}:
+        status = "skipped"
+        error = "Threat-intel providers were not configured or no lookup was possible."
+    elif "completed" in provider_statuses:
+        status = "completed"
+        error = "One or more provider results were unavailable." if provider_statuses & {"failed", "timed_out", "unavailable"} else None
+    elif "timed_out" in provider_statuses or any("timed_out" in reason or "timeout" in reason for reason in reasons):
+        status, error = "timed_out", "One or more threat-intel lookups timed out."
+    elif provider_statuses <= {"skipped", "unavailable"} and all(
+        item.get("status") == "skipped" or item.get("reason") in safe_skip_reasons
+        for item in intel_results
+    ):
+        status, error = "skipped", "Reputation lookup was skipped because the target was not eligible or no key was configured."
+    else:
+        status, error = "failed", "One or more threat-intel providers were unavailable or failed."
+
+    findings = []
+    for result in intel_results:
+        if result.get("status") != "completed":
+            continue
+        provider = result.get("provider", "threat_intel")
+        malicious = result.get("is_malicious")
+        findings.append({
+            "indicator": f"threat_intel:{provider}" if malicious is True else f"threat_intel_status:{provider}",
+            "detail": result.get("detail", "Provider returned no known-threat match; this does not establish safety."),
+            "verification_level": "verified",
+            "source": provider,
+            "score_weight": 40 if malicious is True else 0,
+        })
+
+    return {
+        "findings": findings,
+        "intel_results": intel_results,
+        "runs": [_run("ThreatIntelligence", status, started, findings, tools, error)],
+    }
 
 def impersonation_agent(state: WorkflowState) -> dict:
     started = time.monotonic()
@@ -331,18 +419,20 @@ def build_workflow():
     graph.add_node("prepare", prepare)
     graph.add_node("router", router)
     graph.add_node("message_agent", guarded_agent(["MessageAnalysis"], message_agent))
-    graph.add_node("url_agent", guarded_agent(["URLInvestigation", "ThreatIntelligence"], url_agent))
+    graph.add_node("url_agent", guarded_agent(["URLInvestigation"], url_agent))
+    graph.add_node("threat_intelligence_agent", guarded_agent(["ThreatIntelligence"], threat_intelligence_agent))
     graph.add_node("impersonation_agent", guarded_agent(["Impersonation"], impersonation_agent))
     graph.add_node("conversation_agent", guarded_agent(["ConversationAnalysis"], conversation_agent))
     graph.add_node("reconcile", reconcile)
     graph.add_node("risk_assessment", risk_assessment)
     graph.add_node("recommend", recommend)
-    graph.add_node("explain", explain)
+    graph.add_node("explain", guarded_agent(["LLMExplanation"], explain))
     graph.add_node("finalize", finalize)
     graph.add_edge(START, "prepare")
     graph.add_edge("prepare", "router")
     graph.add_conditional_edges("router", route_agents)
-    graph.add_edge(["message_agent", "url_agent", "impersonation_agent", "conversation_agent"], "reconcile")
+    graph.add_edge(["message_agent", "url_agent", "impersonation_agent", "conversation_agent"], "threat_intelligence_agent")
+    graph.add_edge("threat_intelligence_agent", "reconcile")
     graph.add_edge("reconcile", "risk_assessment")
     graph.add_edge("risk_assessment", "recommend")
     graph.add_edge("recommend", "explain")

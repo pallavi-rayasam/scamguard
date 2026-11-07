@@ -71,10 +71,10 @@ def test_url_agent_uses_internal_scanner_and_preserves_unavailable_provider_stat
     assert report["data_availability"]["threat_intelligence"] == {
         "google_safe_browsing": "unavailable", "virustotal": "unavailable",
     }
-    assert next(run for run in report["agents"] if run["agent_name"] == "ThreatIntelligence")["status"] == "unavailable"
+    assert next(run for run in report["agents"] if run["agent_name"] == "ThreatIntelligence")["status"] == "skipped"
 
 
-def test_internal_scanner_timeout_becomes_unavailable_without_failing_graph(monkeypatch):
+def test_internal_scanner_timeout_maps_to_timed_out_agent_records_without_failing_graph(monkeypatch):
     from dataclasses import replace
     from app.agents import workflow
     monkeypatch.setattr(workflow, "settings", replace(workflow.settings, url_scanner_url="http://url-scanner:8001"))
@@ -90,7 +90,7 @@ def test_internal_scanner_timeout_becomes_unavailable_without_failing_graph(monk
 
     url_run = next(run for run in report["agents"] if run["agent_name"] == "URLInvestigation")
     intel_run = next(run for run in report["agents"] if run["agent_name"] == "ThreatIntelligence")
-    assert url_run["status"] == intel_run["status"] == "unavailable"
+    assert url_run["status"] == intel_run["status"] == "timed_out"
     assert report["risk_level"] in {"Low", "Moderate", "High", "Critical"}
 
 
@@ -199,3 +199,139 @@ def test_redaction_is_applied_before_existing_openai_explanation_provider(monkey
     assert "token=private" not in captured["text"]
     assert "[URL origin: https://example.com]" in captured["text"]
     assert result["runs"][0]["status"] == "completed"
+
+def test_seven_agent_nodes_and_all_run_records_follow_the_audit_contract():
+    from app.agents import workflow
+
+    graph_nodes = set(workflow.build_workflow().get_graph().nodes)
+    assert {
+        "message_agent",
+        "url_agent",
+        "impersonation_agent",
+        "threat_intelligence_agent",
+        "conversation_agent",
+        "risk_assessment",
+        "recommend",
+    } <= graph_nodes
+
+    report = workflow.investigate("Your OTP is 123456. Pay now.", "text")
+    expected_names = {
+        "MessageAnalysis",
+        "URLInvestigation",
+        "Impersonation",
+        "ThreatIntelligence",
+        "ConversationAnalysis",
+        "RiskAssessment",
+        "Recommendation",
+    }
+    runs = {run["agent_name"]: run for run in report["agents"]}
+    assert expected_names <= runs.keys()
+    for run in report["agents"]:
+        assert run["status"] in {"completed", "skipped", "failed", "timed_out"}
+        assert isinstance(run["duration_ms"], int) and run["duration_ms"] >= 0
+        assert isinstance(run["tools_used"], list)
+        assert "error" in run
+    assert runs["URLInvestigation"]["status"] == "skipped"
+    assert runs["ThreatIntelligence"]["status"] == "skipped"
+    assert runs["ConversationAnalysis"]["status"] == "skipped"
+    assert all(item.get("verification_level") in {"verified", "heuristic", "llm_inferred"} for item in report["findings"])
+
+
+def test_llm_provider_setup_failure_falls_back_to_deterministic_report(monkeypatch):
+    from app.agents import workflow
+
+    def fail_provider_setup():
+        raise RuntimeError("private provider setup detail")
+
+    monkeypatch.setattr(workflow, "get_explanation_provider", fail_provider_setup)
+    report = workflow.investigate("Pay now and transfer the amount immediately.", "sms")
+
+    llm_run = next(run for run in report["agents"] if run["agent_name"] == "LLMExplanation")
+    assert report["risk_score"] > 0
+    assert report["explanation"] == ""
+    assert report["data_availability"]["llm"] == "failed"
+    assert llm_run["status"] == "failed"
+    assert llm_run["error"] == "RuntimeError"
+    assert "private provider setup detail" not in str(report)
+
+
+def test_llm_inferred_findings_do_not_increase_evidence_strength():
+    from app.detection.scoring import evidence_strength
+
+    two_heuristics = [
+        {"verification_level": "heuristic"},
+        {"verification_level": "heuristic"},
+    ]
+    assert evidence_strength(two_heuristics) == "moderate"
+    assert evidence_strength(two_heuristics + [{"verification_level": "llm_inferred"}]) == "moderate"
+    assert evidence_strength([{"verification_level": "llm_inferred"}]) == "weak"
+
+def test_url_and_threat_intel_agents_call_separate_scanner_endpoints(monkeypatch):
+    from dataclasses import replace
+    import httpx
+    from app.agents import workflow
+
+    calls = []
+    monkeypatch.setattr(
+        workflow,
+        "settings",
+        replace(workflow.settings, url_scanner_url="http://url-scanner:8001"),
+    )
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, endpoint):
+            self.endpoint = endpoint
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            if self.endpoint.endswith("/analyze"):
+                return {
+                    "status": "completed",
+                    "origin": "https://bit.ly",
+                    "findings": [{
+                        "indicator": "url_shortener",
+                        "detail": "Known shortener.",
+                        "verification_level": "heuristic",
+                        "source": "url_domain_heuristic",
+                        "score_weight": 14,
+                    }],
+                }
+            return {
+                "status": "completed",
+                "origin": "https://bit.ly",
+                "threat_intel_results": [
+                    {"provider": "google_safe_browsing", "status": "completed", "is_malicious": False, "detail": "No known threat found; not verified safe."},
+                    {"provider": "virustotal", "status": "unavailable", "is_malicious": None, "reason": "not_configured"},
+                ],
+            }
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs["follow_redirects"] is False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, json):
+            calls.append(endpoint)
+            return Response(endpoint)
+
+    monkeypatch.setattr(httpx, "Client", Client)
+    report = workflow.investigate("Please review https://bit.ly", "url")
+
+    assert calls == [
+        "http://url-scanner:8001/analyze",
+        "http://url-scanner:8001/reputation",
+    ]
+    assert any(item["indicator"] == "url_shortener" for item in report["findings"])
+    url_run = next(run for run in report["agents"] if run["agent_name"] == "URLInvestigation")
+    intel_run = next(run for run in report["agents"] if run["agent_name"] == "ThreatIntelligence")
+    assert url_run["status"] == intel_run["status"] == "completed"
+    assert {item["status"] for item in report["threat_intel_results"]} == {"completed", "unavailable"}
