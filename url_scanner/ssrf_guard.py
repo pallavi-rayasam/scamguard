@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import http.client
 import ipaddress
 import math
+import re
 import socket
 import ssl
 from urllib.parse import quote, urljoin, urlsplit
@@ -30,6 +31,12 @@ METADATA_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
     "fd20:ce::254/128",  # GCP IPv6 metadata address
 ))
 
+
+# Legacy numeric IPv4 spellings are not DNS names. Reject them before resolver
+# interpretation can differ across platforms (decimal, hexadecimal, or octal).
+_LEGACY_NUMERIC_IPV4_RE = re.compile(
+    r"^(?:0[xX][0-9a-fA-F]+|[0-9]+)(?:\.(?:0[xX][0-9a-fA-F]+|[0-9]+)){0,3}$"
+)
 
 class SSRFBlocked(ValueError):
     """The requested URL resolves to a non-public or unsupported target."""
@@ -83,6 +90,8 @@ def _normalize_hostname(hostname: str) -> str:
     try:
         return str(ipaddress.ip_address(unbracketed))
     except ValueError:
+        if _LEGACY_NUMERIC_IPV4_RE.fullmatch(unbracketed):
+            raise SSRFBlocked("ambiguous_numeric_address")
         try:
             ascii_name = unbracketed.encode("idna").decode("ascii").lower()
         except UnicodeError as exc:

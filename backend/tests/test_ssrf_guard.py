@@ -59,18 +59,18 @@ class FakeSocket:
     "http://[fc00::1]/",  # IPv6 unique-local
     "http://[fd00:ec2::254]/",  # AWS IPv6 metadata
 ])
-def test_literal_private_loopback_link_local_and_metadata_addresses_are_blocked(url):
+def test_ssrf_attack_using_non_public_ip_literal_is_blocked(url):
     with pytest.raises(SSRFBlocked):
         validate_target(url)
 
 
-def test_dns_response_with_any_private_address_fails_closed(monkeypatch):
+def test_dns_rebinding_attack_with_public_and_private_answers_is_blocked(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: [dns_record("93.184.216.34", port), dns_record("192.168.1.20", port)])
     with pytest.raises(SSRFBlocked, match="dns_returned_non_public_address"):
         validate_target("https://mixed.example/")
 
 
-def test_hostname_resolving_to_loopback_is_blocked(monkeypatch):
+def test_dns_rebinding_attack_resolving_to_loopback_is_blocked(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: [dns_record("127.0.0.1", port)])
     with pytest.raises(SSRFBlocked, match="dns_returned_non_public_address"):
         validate_target("http://attacker-controlled.example/")
@@ -82,7 +82,7 @@ def test_hostname_resolving_to_loopback_is_blocked(monkeypatch):
     ("http://example.com:8080/", "unsupported_port"),
     ("http://example.com/path\r\nHost: 127.0.0.1/", "control_character_in_url"),
 ])
-def test_unsupported_or_malformed_targets_are_blocked_before_connect(url, reason):
+def test_ssrf_attack_using_disallowed_scheme_userinfo_port_or_control_is_blocked(url, reason):
     with pytest.raises(SSRFBlocked, match=reason):
         validate_target(url)
 
@@ -142,7 +142,7 @@ def test_head_never_reads_or_returns_a_response_body(monkeypatch):
     assert result.body_truncated is False
 
 
-def test_redirect_to_private_address_is_revalidated_and_blocked(monkeypatch):
+def test_redirect_ssrf_attack_to_private_ip_is_revalidated_and_blocked(monkeypatch):
     fake = FakeSocket(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/admin\r\nContent-Length: 0\r\n\r\n")
     connected = []
     monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: [dns_record("93.184.216.34", port)])
@@ -153,7 +153,7 @@ def test_redirect_to_private_address_is_revalidated_and_blocked(monkeypatch):
     assert connected == [("93.184.216.34", 80)]
 
 
-def test_redirect_count_is_capped_without_automatic_following(monkeypatch):
+def test_redirect_chain_attack_is_capped_without_automatic_following(monkeypatch):
     responses = [
         FakeSocket(b"HTTP/1.1 302 Found\r\nLocation: http://two.example/\r\nContent-Length: 0\r\n\r\n"),
         FakeSocket(b"HTTP/1.1 302 Found\r\nLocation: http://three.example/\r\nContent-Length: 0\r\n\r\n"),
@@ -173,3 +173,71 @@ def test_empty_dns_answer_is_unavailable_not_trusted(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: [])
     with pytest.raises(FetchUnavailable, match="dns_no_addresses"):
         validate_target("https://no-record.example/")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://2130706433/",  # decimal integer form of 127.0.0.1
+        "http://0x7f000001/",  # hexadecimal form of 127.0.0.1
+        "http://0177.0.0.1/",  # octal first component form of 127.0.0.1
+    ],
+    ids=["decimal-loopback-ip", "hex-loopback-ip", "octal-loopback-ip"],
+)
+def test_legacy_numeric_loopback_ip_attacks_are_rejected_before_dns(url, monkeypatch):
+    def dns_must_not_be_used(host, port, type):
+        raise AssertionError("ambiguous numeric IP notation must not be resolved as a hostname")
+
+    monkeypatch.setattr(socket, "getaddrinfo", dns_must_not_be_used)
+    with pytest.raises(SSRFBlocked, match="ambiguous_numeric_address"):
+        validate_target(url)
+
+
+@pytest.mark.parametrize(
+    "url,reason",
+    [
+        ("http://user@127.0.0.1/", "userinfo_not_allowed"),
+        ("http://evil.com@127.0.0.1/", "userinfo_not_allowed"),
+        ("gopher://127.0.0.1/", "unsupported_scheme"),
+        ("ftp://127.0.0.1/", "unsupported_scheme"),
+        ("http://example.test:81/", "unsupported_port"),
+        ("https://example.test:8443/", "unsupported_port"),
+    ],
+    ids=[
+        "userinfo-direct-loopback",
+        "userinfo-evil-domain-at-loopback",
+        "gopher-scheme-loopback",
+        "ftp-scheme-loopback",
+        "nonstandard-http-port",
+        "nonstandard-https-port",
+    ],
+)
+def test_ssrf_attack_using_userinfo_non_http_scheme_or_nonstandard_port_is_blocked(url, reason):
+    with pytest.raises(SSRFBlocked, match=reason):
+        validate_target(url)
+
+
+def test_redirect_revalidation_blocks_private_dns_answer_on_second_hop(monkeypatch):
+    redirect = FakeSocket(
+        b"HTTP/1.1 302 Found\r\nLocation: http://second.example/private\r\nContent-Length: 0\r\n\r\n"
+    )
+    connected = []
+    resolved = []
+
+    def resolve(host, port, type):
+        resolved.append(host)
+        address = "93.184.216.34" if host == "first.example" else "10.0.0.7"
+        return [dns_record(address, port)]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda address, timeout: (connected.append(address), redirect)[1],
+    )
+
+    with pytest.raises(SSRFBlocked, match="dns_returned_non_public_address"):
+        safe_fetch("http://first.example/start", method="HEAD")
+
+    assert resolved == ["first.example", "second.example"]
+    assert connected == [("93.184.216.34", 80)]
