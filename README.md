@@ -70,3 +70,8 @@ On Windows, install the Tesseract OCR engine (UB Mannheim build) with:
     & "C:\Program Files\Tesseract-OCR\tesseract.exe" --version
 
 Set TESSERACT_CMD=C:/Program Files/Tesseract-OCR/tesseract.exe in .env (use the executable path shown by your installation). Screenshot uploads accept JPEG/PNG image bytes up to 5 MB, preprocess them with OpenCV, and pass extracted text through the normal redaction and investigation flow. Screenshot-extracted links receive structural checks only: the service does not fetch them or send them to reputation providers. If the OCR engine is missing or cannot run, the API returns OCR unavailable; it never substitutes generated text. The backend Docker image installs tesseract-ocr.
+
+
+### PDF reports
+
+Open any saved report and choose Download PDF. The export is generated from the stored report snapshot and includes the risk summary, indicators and verification levels, URL/provider states, agent audit, recommendations, limitations, and timestamps in the browser's local time zone. The API permits downloads only to the report owner or an administrator.

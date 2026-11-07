@@ -13,9 +13,11 @@ Base path: `/api`. Interactive OpenAPI docs are served at `/docs` when the FastA
 | `POST /api/auth/logout` | CSRF | `204`, clears cookies |
 | `GET /api/auth/me` | user | `200` current user |
 | `POST /api/investigations/text` | user + CSRF | `201` synchronous report; body has `text` and `input_type` |
+| POST /api/investigations/image | user + CSRF | 201 stored screenshot report; JPEG/PNG magic bytes, 5 MB cap; OCR unavailable/timeout returned clearly; extracted links are not fetched or reputation-queried |
 | `GET /api/investigations` | user | `200` own reports; accepts `q`, `risk_level`, `limit`, `offset` |
 | `GET /api/investigations/{id}` | owner | `200` report and redacted content; `404` when absent/not owned |
 | `GET /api/investigations/{id}/report` | owner | `200` report |
+| GET /api/investigations/{id}/report.pdf | owner/admin | 200 stored report as PDF attachment; optional IANA time_zone query for local timestamps; 404 absent/not authorized |
 | `GET /api/investigations/{id}/status` | owner | `200`, currently synchronous and always complete |
 | `DELETE /api/investigations/{id}` | owner + CSRF | `204` hard deletes one investigation |
 | `DELETE /api/me/data` | user + CSRF | `204` deletes account and owned data |
@@ -26,7 +28,7 @@ Base path: `/api`. Interactive OpenAPI docs are served at `/docs` when the FastA
 | `GET /api/admin/analytics` | admin | `200` current aggregate counts |
 | `GET /api/admin/system-health` | admin | `200` configuration availability (database not probed) |
 
-Investigation input types currently accepted: `text`, `sms`, `whatsapp`, `url`, `email`, `conversation`, `payment_request`, and `transaction`. The scanner uses the single `/text` endpoint with the selected `input_type`.
+Investigation input types currently accepted: text, sms, whatsapp, url, email, conversation, payment_request, transaction, and screenshot. Screenshots use input_type=screenshot through the multipart image endpoint. The scanner uses the single /text endpoint for the other text-based input types.
 
 ## Report shape
 
@@ -40,4 +42,4 @@ The score thresholds are Low `0–24`, Moderate `25–49`, High `50–74`, Criti
 
 ## Not implemented yet
 
-Dedicated public `/url`, `/screenshot`, `/email`, `/conversation`, and `/transaction` paths; upload validation/OCR; `/report.pdf`; dashboard trends; admin redacted replay; WebSocket/SSE status; pagination totals; and formal request/response models for every route.
+Dedicated public /url, /email, /conversation, and /transaction paths; dashboard trends; admin redacted replay; WebSocket/SSE status; pagination totals; and formal request/response models for every route.

@@ -2,7 +2,7 @@ import { Component, createContext, useContext, useEffect, useMemo, useRef, useSt
 import {
   ArrowRight, BookOpen, CheckCircle2, ChevronRight, CircleAlert, ClipboardList, LayoutDashboard,
   LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquareWarning, ScanLine, Search, Settings,
-  Shield, ShieldCheck, ShieldAlert, Sparkles, Trash2, TriangleAlert, X,
+  Shield, ShieldCheck, ShieldAlert, Sparkles, Trash2, TriangleAlert, Download, X,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, type Report, type User } from './api'
@@ -256,11 +256,32 @@ function ReportPage({ id, navigate }: { id: string; navigate: (page: Page, id?: 
   const [report, setReport] = useState<Report | null>(null)
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const [pdfError, setPdfError] = useState('')
   useEffect(() => { if (id) api.report(id).then(setReport).catch(e => setError(e.message)); else setError('Open this report from history to view its details.') }, [id])
   async function sendFeedback(rating: string) { if (!id) return; try { await api.feedback(id, rating); setFeedback('Thanks. Your feedback is saved separately from evaluation labels.') } catch (e) { setFeedback(e instanceof Error ? e.message : 'Feedback was not saved.') } }
+  async function downloadPdf() {
+    setPdfBusy(true); setPdfError('')
+    try {
+      const blob = await api.reportPdf(id)
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = 'scamguard-report-' + id + '.pdf'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      globalThis.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+    } catch (caught) {
+      setPdfError(caught instanceof Error ? caught.message : 'PDF could not be downloaded.')
+    } finally {
+      setPdfBusy(false)
+    }
+  }
   if (error) return <><PageHeader eyebrow="REPORT" title="Report unavailable" description={error} /><button className="button" onClick={() => navigate('history')}>Back to history</button></>
   if (!report) return <div className="loading-row"><LoaderCircle className="spin" /> Loading report…</div>
-  return <><PageHeader eyebrow="INVESTIGATION REPORT" title="Evidence and next steps" description={`Created ${formatLocalTimestamp(report.created_at)}`} action={<button className="button button-quiet" onClick={() => navigate('history')}>Back to history</button>} />
+  return <><PageHeader eyebrow="INVESTIGATION REPORT" title="Evidence and next steps" description={`Created ${formatLocalTimestamp(report.created_at)}`} action={<><button className="button" onClick={downloadPdf} disabled={pdfBusy}><Download size={16} /> {pdfBusy ? 'Preparing PDF…' : 'Download PDF'}</button><button className="button button-quiet" onClick={() => navigate('history')}>Back to history</button></>} />
+    {pdfError && <div className="error-message" role="alert"><CircleAlert size={16} />{pdfError}</div>}
     <div className="report-grid"><section className="panel score-panel"><span className="eyebrow">DETERMINISTIC RISK SCORE</span><div className="score-display"><strong>{report.risk_score}</strong><span>/ 100</span></div><RiskBadge level={report.risk_level} /><p>This score is not a probability. Model confidence: <strong>{report.model_confidence.replaceAll('_', ' ')}</strong>.</p><div className="score-meta"><div><span>Evidence strength</span><strong>{report.evidence_strength}</strong></div><div><span>Category</span><strong>{categoryLabel(report.category)}</strong></div></div></section>
       <section className="panel findings-panel"><div className="section-head"><div><h2>Indicators found</h2><p>Each finding shows its verification level.</p></div></div>{report.findings.length ? <div className="finding-list">{report.findings.map((item, index) => <div className="finding-row" key={`${String(item.indicator)}-${index}`}><div className="finding-icon"><TriangleAlert size={16} /></div><div><strong>{String(item.detail)}</strong><span>{String(item.source)} · {String(item.verification_level)}</span></div></div>)}</div> : <EmptyState title="No indicators detected" body="No known threat does not mean the content is safe. Verify independently." />}</section>
     </div>

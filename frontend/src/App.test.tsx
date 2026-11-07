@@ -2,15 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from './App'
 
-const { mockMe, mockLogin, mockRegister, mockImage } = vi.hoisted(() => ({
+const { mockMe, mockLogin, mockRegister, mockImage, mockReport, mockReportPdf } = vi.hoisted(() => ({
   mockMe: vi.fn(),
   mockLogin: vi.fn(),
   mockRegister: vi.fn(),
   mockImage: vi.fn(),
+  mockReport: vi.fn(),
+  mockReportPdf: vi.fn(),
 }))
-vi.mock('./api', () => ({ api: { me: mockMe, login: mockLogin, register: mockRegister, image: mockImage } }))
+vi.mock('./api', () => ({ api: { me: mockMe, login: mockLogin, register: mockRegister, image: mockImage, report: mockReport, reportPdf: mockReportPdf } }))
 
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 beforeEach(() => {
   location.hash = '#/home'
@@ -95,5 +97,32 @@ describe('screenshot upload UI', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Run investigation' }))
     await waitFor(() => expect(mockImage).toHaveBeenCalledWith(file))
     await waitFor(() => expect(location.hash).toBe('#/report/image-report'))
+  })
+})
+
+
+describe('report PDF download', () => {
+  it('downloads a report PDF from the owner report page', async () => {
+    mockMe.mockResolvedValue({ id: 'user-id', email: 'member@example.com', role: 'user' })
+    mockReport.mockResolvedValue({
+      id: 'report-id', category: null, risk_score: 0, risk_level: 'Low', score_is_probability: false,
+      model_confidence: 'not_available', evidence_strength: 'Weak', findings: [], evidence: [], agents: [],
+      urls: [], threat_intel_results: [], url_scans: [], data_availability: {}, recommendations: [],
+      explanation: '', limitations: [], created_at: '2026-01-02T14:14:00Z',
+    })
+    mockReportPdf.mockResolvedValue(new Blob(['%PDF-1.4'], { type: 'application/pdf' }))
+    const NativeURL = URL
+    class DownloadURL extends NativeURL {
+      static createObjectURL = vi.fn(() => 'blob:pdf')
+      static revokeObjectURL = vi.fn()
+    }
+    vi.stubGlobal('URL', DownloadURL)
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    location.hash = '#/report/report-id'
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Evidence and next steps' })
+    fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }))
+    await waitFor(() => expect(mockReportPdf).toHaveBeenCalledWith('report-id'))
+    expect(screen.getByRole('button', { name: 'Download PDF' }).hasAttribute('disabled')).toBe(false)
   })
 })
