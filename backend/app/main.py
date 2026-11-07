@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from sqlalchemy.exc import OperationalError
 
 from app.api.routes import router
 from app.core.config import settings
@@ -49,6 +50,12 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-CSRF-Token"],
 )
 app.include_router(router)
+
+
+@app.exception_handler(OperationalError)
+async def database_unavailable_handler(_request: Request, _exc: OperationalError) -> JSONResponse:
+    """Return a safe, actionable response when the database cannot be reached."""
+    return JSONResponse(status_code=503, content={"detail": "Database unavailable"})
 
 
 @app.get("/health")

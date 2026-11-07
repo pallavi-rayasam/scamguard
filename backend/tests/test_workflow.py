@@ -1,4 +1,15 @@
+import pytest
+
 from app.agents.workflow import investigate
+
+
+@pytest.fixture(autouse=True)
+def disable_live_scanner_by_default(monkeypatch):
+    """Keep workflow tests hermetic unless a test explicitly supplies a fake scanner."""
+    from dataclasses import replace
+    from app.agents import workflow
+
+    monkeypatch.setattr(workflow, "settings", replace(workflow.settings, url_scanner_url=""))
 
 
 def test_workflow_marks_unconfigured_intel_as_skipped(monkeypatch):

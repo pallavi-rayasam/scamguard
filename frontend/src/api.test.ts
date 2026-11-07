@@ -42,6 +42,16 @@ describe('auth API errors and timeout', () => {
     })
   })
 
+  it('preserves the database unavailable detail for the auth UI', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: 'csrf-test' }))
+      .mockResolvedValueOnce(jsonResponse({ detail: 'Database unavailable' }, 503))
+    vi.stubGlobal('fetch', fetchMock)
+    const { api } = await import('./api')
+    await expect(api.register('member@example.com', 'long-enough-password'))
+      .rejects.toMatchObject({ name: 'ApiError', message: 'Database unavailable' })
+  })
+
   it('aborts an API request after exactly 15 seconds', async () => {
     vi.useFakeTimers()
     let mainSignal: AbortSignal | undefined

@@ -61,6 +61,27 @@ def test_register_login_and_protected_me_endpoint(client):
     assert client.get("/api/auth/me").status_code == 200
 
 
+def test_register_returns_clear_503_when_database_connection_fails(client, tmp_path):
+    missing_database_path = tmp_path / "missing-directory" / "unavailable.db"
+    unreachable_engine = create_engine(f"sqlite:///{missing_database_path}")
+    unreachable_session = sessionmaker(bind=unreachable_engine)
+
+    def unavailable_db():
+        with unreachable_session() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = unavailable_db
+    csrf = client.get("/api/auth/csrf").json()["csrf_token"]
+    response = client.post(
+        "/api/auth/register",
+        headers={"X-CSRF-Token": csrf},
+        json={"email": "db-outage@example.com", "password": "correct-horse-battery"},
+    )
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Database unavailable"}
+    unreachable_engine.dispose()
+
+
 def test_protected_me_endpoint_rejects_unauthenticated_access(client):
     response = client.get("/api/auth/me")
     assert response.status_code == 401

@@ -28,9 +28,10 @@ coverage/
 # Runtime and generated content
 uploads/
 *.log
+local.db
+*.db
 *.sqlite
 *.sqlite3
-*.db
 *.pdf
 
 # Editors and operating systems
