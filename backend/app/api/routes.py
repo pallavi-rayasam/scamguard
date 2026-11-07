@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.detection.normalize import load_categories
 from app.models.entities import AgentRun, AuditLog, Evidence, ExtractedURL, Feedback, Investigation, Recommendation, ThreatIntelResult, User
 from app.ocr import MAX_IMAGE_BYTES, ImageDecodeError, OCRTimeoutError, OCRUnavailableError, UnsupportedImageError, extract_text_from_image
+from app.reports.pdf import build_investigation_pdf
 from app.schemas.common import ConversationRequest, FeedbackRequest, InvestigationRequest, LoginRequest, RegisterRequest, TransactionRequest, UserResponse
 
 router = APIRouter(prefix="/api")
@@ -262,6 +263,30 @@ def get_investigation(investigation_id: UUID, user: User = Depends(current_user)
 def get_report(investigation_id: UUID, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     row = _owned_investigation(investigation_id, user, db)
     return {"id": row.id, "created_at": _utc_timestamp(row.created_at), **row.report_json, "category": row.category}
+
+
+@router.get("/investigations/{investigation_id}/report.pdf")
+def download_report_pdf(
+    investigation_id: UUID,
+    time_zone: str = Query(default="UTC", min_length=1, max_length=64),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    row = db.get(Investigation, investigation_id)
+    if not row or (row.user_id != user.id and user.role != "admin"):
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    report = dict(row.report_json)
+    report["category"] = row.category
+    report.setdefault("input_type", row.input_type)
+    try:
+        content = build_investigation_pdf(report, row.created_at, time_zone)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Unknown time zone") from None
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="scamguard-report-{row.id}.pdf"'},
+    )
 
 
 @router.get("/investigations/{investigation_id}/status")

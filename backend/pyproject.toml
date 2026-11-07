@@ -21,13 +21,14 @@ dependencies = [
   "python-dotenv==1.1.1",
   "python-multipart==0.0.33",
   "pyjwt==2.10.1",
+  "reportlab==5.1.0",
   "scikit-learn==1.9.1",
   "sqlalchemy==2.0.57",
   "uvicorn[standard]==0.36.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==8.4.2", "pytest-cov==6.2.1"]
+dev = ["pytest==8.4.2", "pytest-cov==6.2.1", "pypdf==7.0.0"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

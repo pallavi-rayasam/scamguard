@@ -57,6 +57,19 @@ describe('auth API errors and timeout', () => {
     expect((options.headers as Headers).has('Content-Type')).toBe(false)
   })
 
+  it('downloads a PDF blob with the browser time zone in the request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('%PDF-1.4', {
+      status: 200,
+      headers: { 'Content-Type': 'application/pdf' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { api } = await import('./api')
+    const blob = await api.reportPdf('report-id')
+    expect(blob).toBeInstanceOf(Blob)
+    expect(fetchMock.mock.calls[0][0]).toContain('/investigations/report-id/report.pdf?time_zone=')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).credentials).toBe('include')
+  })
+
   it('preserves the database unavailable detail for the auth UI', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ csrf_token: 'csrf-test' }))

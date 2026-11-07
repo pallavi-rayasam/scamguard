@@ -1,11 +1,13 @@
 from dataclasses import replace
 from datetime import datetime, timezone
+from io import BytesIO
 from uuid import UUID
 
 import cv2
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -14,7 +16,7 @@ from app.api import routes
 from app.core import security
 from app.db.base import Base
 from app.db.session import get_db
-from app.models.entities import Investigation
+from app.models.entities import Investigation, User
 from app.main import RequestGuardMiddleware, app
 from app.ocr import MAX_IMAGE_BYTES
 
@@ -367,3 +369,103 @@ def test_screenshot_prompt_injection_is_redacted_and_does_not_open_links_or_chan
         assert "[URL origin: https://evil.example.invalid]" in saved.redacted_content
         assert "/login" not in saved.redacted_content
         assert "token=secret" not in saved.redacted_content
+
+
+def _create_stored_pdf_report(client):
+    _register_for_image(client)
+    user_id = UUID(client.get("/api/auth/me").json()["id"])
+    report_data = {
+        "input_type": "text",
+        "risk_score": 88,
+        "risk_level": "High",
+        "findings": [{
+            "indicator": "urgent_payment_request",
+            "detail": "Unexpected payment pressure with an unverified recipient.",
+            "verification_level": "heuristic",
+            "source": "message_rules",
+        }],
+        "evidence": [{
+            "source": "message_rules",
+            "verification_level": "heuristic",
+            "timestamp": "2026-01-02T14:13:00Z",
+            "detail": "A seeded payment-pressure pattern matched.",
+        }],
+        "urls": ["https://example.in"],
+        "url_scans": [{
+            "origin": "https://example.in",
+            "status": "unavailable",
+            "reason": "scanner_unavailable",
+        }],
+        "threat_intel_results": [{
+            "provider": "VirusTotal",
+            "status": "unavailable",
+            "is_malicious": None,
+            "reason": "key_missing",
+        }],
+        "agents": [{
+            "agent_name": "URLInvestigation",
+            "status": "failed",
+            "duration_ms": 71,
+            "tools_used": ["internal_url_scanner"],
+            "error": "scanner_unavailable",
+        }],
+        "recommendations": ["Verify through the official app before paying."],
+        "limitations": ["No known threat found does not mean a URL is safe."],
+    }
+    with client.app.state.test_session_factory() as db:
+        row = Investigation(
+            user_id=user_id,
+            input_type="text",
+            redacted_content="A stored redacted message.",
+            category="phishing",
+            risk_score=88,
+            risk_level="High",
+            report_json=report_data,
+            created_at=datetime(2026, 1, 2, 14, 14, tzinfo=timezone.utc),
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row.id
+
+
+def test_pdf_export_contains_stored_report_fields_unavailable_status_audit_and_local_times(client):
+    report_id = _create_stored_pdf_report(client)
+    response = client.get(f"/api/investigations/{report_id}/report.pdf?time_zone=Asia%2FKolkata")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.content.startswith(b"%PDF-")
+    assert "attachment;" in response.headers["content-disposition"]
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(response.content)).pages)
+    for expected in (
+        "88 / 100", "High", "phishing", "urgent_payment_request", "heuristic",
+        "VirusTotal", "unavailable", "scanner_unavailable", "URLInvestigation",
+        "failed", "71 ms", "scanner_unavailable", "Verify through the official app",
+        "No known threat found does not mean a URL is safe",
+        "2026-01-02 19:44:00 IST", "2026-01-02 19:43:00 IST",
+    ):
+        assert expected in text
+
+
+def test_pdf_export_is_only_available_to_owner_or_admin(client):
+    report_id = _create_stored_pdf_report(client)
+    owner_response = client.get(f"/api/investigations/{report_id}/report.pdf")
+    assert owner_response.status_code == 200
+
+    outsider = User(email="pdf-outsider@example.com", password_hash="not-used", role="user")
+    with client.app.state.test_session_factory() as db:
+        db.add(outsider)
+        db.commit()
+        db.refresh(outsider)
+        outsider_id = outsider.id
+    client.cookies.delete("scamguard_session")
+    client.cookies.set("scamguard_session", security.issue_access_token(outsider_id), path="/")
+    assert client.get("/api/auth/me").json()["email"] == "pdf-outsider@example.com"
+    assert client.get(f"/api/investigations/{report_id}/report.pdf").status_code == 404
+
+    with client.app.state.test_session_factory() as db:
+        admin = db.get(User, outsider_id)
+        admin.role = "admin"
+        db.commit()
+    assert client.get(f"/api/investigations/{report_id}/report.pdf").status_code == 200

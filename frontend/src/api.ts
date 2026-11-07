@@ -79,6 +79,24 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 }
 
+async function requestBlob(path: string): Promise<Blob> {
+  const controller = new AbortController()
+  const timeout = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    const response = await fetch(API_BASE + path, { credentials: 'include', signal: controller.signal })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw apiError(data.detail, response.status)
+    }
+    return await response.blob()
+  } catch (caught) {
+    if (controller.signal.aborted) throw new Error('Request timed out after 15 seconds. Please try again.')
+    throw caught
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
+}
+
 export type User = { id: string; email: string; role: string }
 export type Investigation = { id: string; category: string | null; risk_score: number; risk_level: string; created_at: string }
 export type Report = {
@@ -110,7 +128,12 @@ export const api = {
     if (filters.risk_level) query.set('risk_level', filters.risk_level)
     return request<{ items: Investigation[] }>(`/investigations${query.size ? `?${query}` : ''}`)
   },
-  report: (id: string) => request<Report>(`/investigations/${id}/report`),
+  report: (id: string) => request<Report>('/investigations/' + encodeURIComponent(id) + '/report'),
+  reportPdf: (id: string) => {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const path = '/investigations/' + encodeURIComponent(id) + '/report.pdf?time_zone=' + encodeURIComponent(timeZone)
+    return requestBlob(path)
+  },
   stats: () => request<{ total_investigations: number; risk_distribution: Record<string, number>; category_distribution: Record<string, number> }>('/dashboard/statistics'),
   categories: () => request<Array<{ code: string; name: string; language: string }>>('/scam-categories'),
   awareness: () => request<{ language: string; items: Array<{ title: string; body: string }> }>('/scam-awareness'),
