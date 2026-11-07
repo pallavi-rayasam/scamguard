@@ -6,6 +6,7 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.session import database_engine_options
 from app import models  # noqa: F401, registers model metadata
+from migrations.revision_compat import normalize_legacy_revision_ids
 
 config = context.config
 if config.config_file_name is not None:
@@ -32,6 +33,7 @@ def run_migrations_online() -> None:
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():
+            normalize_legacy_revision_ids(connection)
             context.run_migrations()
 
 

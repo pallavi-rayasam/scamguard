@@ -1,12 +1,12 @@
 """Represent investigations with no matched scam pattern as uncategorized.
 
-Revision ID: 0004_nullable_investigation_category
+Revision ID: 0004_nullable_category
 Revises: 0003_agent_status_contract
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0004_nullable_investigation_category"
+revision = "0004_nullable_category"
 down_revision = "0003_agent_status_contract"
 branch_labels = None
 depends_on = None
