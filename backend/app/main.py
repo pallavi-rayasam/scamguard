@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.api.routes import router
 from app.core.config import settings
+from app.ocr import MAX_IMAGE_BYTES, MAX_MULTIPART_OVERHEAD
 
 
 class RequestGuardMiddleware(BaseHTTPMiddleware):
@@ -24,7 +25,8 @@ class RequestGuardMiddleware(BaseHTTPMiddleware):
             size = int(request.headers.get("content-length", "0"))
         except ValueError:
             return JSONResponse({"detail":"Invalid content length"}, status_code=400)
-        if size > 100_000:
+        max_size = MAX_IMAGE_BYTES + MAX_MULTIPART_OVERHEAD if request.url.path == "/api/investigations/image" else 100_000
+        if size > max_size:
             return JSONResponse({"detail":"Request body too large"}, status_code=413)
         client = request.client.host if request.client else "unknown"
         key = f"{client}:{request.url.path}"
@@ -40,8 +42,45 @@ class RequestGuardMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class ImageUploadBodyLimitMiddleware:
+    """Bound even chunked multipart uploads before Starlette spools them."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or scope.get("path") != "/api/investigations/image" or scope.get("method") != "POST":
+            await self.app(scope, receive, send)
+            return
+
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if message["type"] != "http.request":
+                continue
+            body.extend(message.get("body", b""))
+            if len(body) > MAX_IMAGE_BYTES + MAX_MULTIPART_OVERHEAD:
+                response = JSONResponse({"detail": "Image request exceeds the upload limit"}, status_code=413)
+                await response(scope, receive, send)
+                return
+            if not message.get("more_body", False):
+                break
+
+        sent = False
+        async def replay_receive():
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": bytes(body), "more_body": False}
+            return {"type": "http.disconnect"}
+
+        await self.app(scope, replay_receive, send)
+
+
 app = FastAPI(title="ScamGuard Investigation API", version="0.1.0", description="Advisory scam investigation reports with explicit evidence provenance.")
 app.add_middleware(RequestGuardMiddleware)
+app.add_middleware(ImageUploadBodyLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],

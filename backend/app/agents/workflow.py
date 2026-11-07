@@ -186,6 +186,18 @@ def url_agent(state: WorkflowState) -> dict:
             "runs": [_run("URLInvestigation", "skipped", started, [], [], "No URL extracted.")],
         }
 
+    if state.get("input_type") == "screenshot":
+        findings = [finding for url in urls for finding in inspect_url(url)]
+        scan_results = [
+            {"origin": url, "status": "skipped", "reason": "screenshot_extracted_link_not_opened", "findings": []}
+            for url in urls
+        ]
+        return {
+            "findings": findings,
+            "url_scan_results": scan_results,
+            "runs": [_run("URLInvestigation", "completed", started, findings, ["url_structure_check"])],
+        }
+
     findings: list[dict] = []
     scan_results: list[dict] = []
     tools = ["url_structure_check"]
@@ -231,6 +243,11 @@ def threat_intelligence_agent(state: WorkflowState) -> dict:
     urls = state.get("urls", [])
     if not urls:
         return {"runs": [_run("ThreatIntelligence", "skipped", started, [], [], "No URL was available for lookup.")]}
+
+    if state.get("input_type") == "screenshot":
+        return {
+            "runs": [_run("ThreatIntelligence", "skipped", started, [], [], "External lookups are disabled for screenshot-extracted links.")],
+        }
 
     scan_results = state.get("url_scan_results", [])
     if settings.url_scanner_url:
@@ -416,7 +433,15 @@ def finalize(state: WorkflowState) -> dict:
         intel_run = next((run for run in state.get("runs", []) if run["agent_name"] == "ThreatIntelligence"), None)
         if intel_run and intel_run["status"] in {"failed", "timed_out", "unavailable", "skipped"}:
             intel_status = {"providers": intel_run["status"]}
+    limitations = [
+        "No known threat found does not mean a URL is safe.",
+        "The weighted risk score is not a calibrated probability.",
+        "URL paths and query strings are omitted before storage and threat-intel lookup.",
+    ]
+    if state.get("input_type") == "screenshot":
+        limitations.append("Screenshot-extracted URLs receive structural checks only; they are not opened or sent to external reputation providers.")
     report = {
+        "input_type": state.get("input_type"),
         "category": category,
         "risk_score": state.get("score", 0),
         "risk_level": state.get("risk_level", "Low"),
@@ -437,7 +462,7 @@ def finalize(state: WorkflowState) -> dict:
         "recommendations": state.get("recommendation", []),
         "transaction_advisory": state.get("transaction_advisory"),
         "explanation": state.get("explanation", ""),
-        "limitations": ["No known threat found does not mean a URL is safe.", "The weighted risk score is not a calibrated probability.", "URL paths and query strings are omitted before storage and threat-intel lookup."],
+        "limitations": limitations,
     }
     return {"report": report}
 

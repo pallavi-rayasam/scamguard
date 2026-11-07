@@ -42,6 +42,21 @@ describe('auth API errors and timeout', () => {
     })
   })
 
+  it('uploads a screenshot as multipart without overriding the browser boundary', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ csrf_token: 'csrf-test' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'report-id' }, 201))
+    vi.stubGlobal('fetch', fetchMock)
+    const { api } = await import('./api')
+    const file = new File(['png-data'], 'notice.png', { type: 'image/png' })
+    await api.image(file)
+    const [, options] = fetchMock.mock.calls[1]
+    expect(fetchMock.mock.calls[1][0]).toContain('/investigations/image')
+    expect(options.body).toBeInstanceOf(FormData)
+    expect(options.body.get('file')).toBeInstanceOf(File)
+    expect((options.headers as Headers).has('Content-Type')).toBe(false)
+  })
+
   it('preserves the database unavailable detail for the auth UI', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ csrf_token: 'csrf-test' }))

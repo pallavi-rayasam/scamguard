@@ -23,6 +23,7 @@ class Settings:
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-6-luna")
     google_safe_browsing_key: str = os.getenv("GOOGLE_SAFE_BROWSING_API_KEY", "")
     virustotal_api_key: str = os.getenv("VIRUSTOTAL_API_KEY", "")
+    tesseract_cmd: str = os.getenv("TESSERACT_CMD", "")
 
 
 settings = Settings()

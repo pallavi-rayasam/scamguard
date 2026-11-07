@@ -6,9 +6,9 @@ Date: 2026-11-07
 
 | Area | Result | Evidence |
 |---|---|---|
-| Backend, evaluation, and URL scanner tests | Pass | `163 passed in 15.65s` using the project `.venv` Python 3.12.0; in-memory SQLite plus file-backed migration smoke checks |
-| Frontend tests | Pass | `16 passed` across 4 Vitest files in 8.83s, including URL provider states, auth validation/error rendering, request timeout, busy-state reset, database outage, category labels, and local-time conversion |
-| Frontend production build | Pass with warning | Vite 8.3.6 build succeeded; minified JS chunk is 639.20 kB (188.45 kB gzip) |
+| Backend, evaluation, URL scanner, and OCR tests | Pass | 169 passed in 11.73s using the project venv Python 3.12.0; in-memory SQLite plus file-backed migration smoke checks; includes six OCR endpoint tests |
+| Frontend tests | Pass | 18 passed across 4 Vitest files, including screenshot selection/multipart upload, URL provider states, auth validation/errors, timeout/loading reset, database outage, category labels, and local-time conversion |
+| Frontend production build | Pass with warning | Vite 8.3.6 build succeeded after the screenshot UI change; minified JS chunk is 640.15 kB (188.76 kB gzip) |
 | Local SQLite setup | Pass | `.env` uses `sqlite:///./local.db`; all Alembic revisions completed on a temporary SQLite file at `0003_agent_status_contract` and created 13 application tables. SQLite runtime enables foreign-key enforcement. |
 | PostgreSQL connection failure handling | Pass (bounded local reproduction); live PostgreSQL not verified | PostgreSQL engine is configured with `connect_timeout=3`; an auth registration against unreachable localhost PostgreSQL returns HTTP 503 `Database unavailable` in 3.12 seconds. Docker and a live PostgreSQL server are unavailable. |
 | Report evidence/category/timestamp labels | Pass (SQLite) | Evidence tests cover all three levels and LLM exclusion; unavailable-provider reports remain Limited. API tests prove no-match category is NULL and omitted from category distribution; UTC API timestamps match stored UTC wall time; browser test converts 14:14 UTC to 19:44 Asia/Kolkata. Migration 0004 converts the old placeholder to NULL. |
@@ -21,7 +21,8 @@ Date: 2026-11-07
 | Google Safe Browsing / VirusTotal | Not verified | No API keys configured; adapters return explicit `unavailable` status |
 | OpenAI Responses API | Not verified | No `OPENAI_API_KEY` configured; no request sent |
 | URL scanner container runtime | Not verified | Docker is unavailable; container networking and runtime isolation have not been exercised |
-| OCR/PDF/E2E/Playwright | Not verified | Tier 2 and wider E2E are not implemented |
+| OCR | Pass (local); Docker build/runtime not verified | Tesseract 5.5.3 was exercised on a generated readable PNG. Tests cover unsupported type, 5 MB cap, renamed non-image, missing executable, prompt-injection text, OTP redaction, URL-origin-only redaction, and assertions that extracted links never reach fetch/reputation clients. Docker was unavailable. |
+| PDF/E2E/Playwright | Not verified | PDF export and wider E2E are not implemented |
 
 ## Backend test coverage
 

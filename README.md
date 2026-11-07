@@ -60,3 +60,13 @@ Secrets belong in environment variables and must never be committed. `APP_SECRET
 
 Run backend checks from `backend/` with `..\.venv\Scripts\python.exe -m pytest`. The test report records the latest verification counts and marks live PostgreSQL/Docker behavior as not verified when unavailable. See [the test report](docs/testing/test-report.md) for coverage and limitations.
 
+
+
+### Screenshot OCR
+
+On Windows, install the Tesseract OCR engine (UB Mannheim build) with:
+
+    winget install --id UB-Mannheim.TesseractOCR -e
+    & "C:\Program Files\Tesseract-OCR\tesseract.exe" --version
+
+Set TESSERACT_CMD=C:/Program Files/Tesseract-OCR/tesseract.exe in .env (use the executable path shown by your installation). Screenshot uploads accept JPEG/PNG image bytes up to 5 MB, preprocess them with OpenCV, and pass extracted text through the normal redaction and investigation flow. Screenshot-extracted links receive structural checks only: the service does not fetch them or send them to reputation providers. If the OCR engine is missing or cannot run, the API returns OCR unavailable; it never substitutes generated text. The backend Docker image installs tesseract-ocr.
