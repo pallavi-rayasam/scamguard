@@ -18,12 +18,13 @@ Statuses: `done` means the artifact exists; `not verified` means it has not been
 | `feature/ssrf-hardening` | Pass | Full backend suite: 79 passed; three new legacy numeric-IP tests exposed a real DNS-resolution gap, fixed by rejecting ambiguous numeric hosts before resolution |
 | URL scanner service, analysis, provider clients | Pass (unit/integration tests) | `url_scanner/`; internal API is wired into backend workflow and Compose; live provider calls are not verified |
 | URL scanner Docker Compose runtime | Not verified | Docker is unavailable; scanner container and PostgreSQL-backed stack have not been started |
-| Evaluation harness | implemented; measured on authored set | `ml/evaluate.py`; 32 hand-labelled examples, 20/6/6 split; see `docs/testing/evaluation-report.md`; LLM-only skipped without key |
+| Evaluation harness | Pass | Loader requires text/label/category/source/author/split; exact and near-duplicate test/train leakage checks; 2,000 bootstrap 95% CIs; stratified 5-fold CV on train+validation; current data size 32; see `docs/testing/evaluation-report.md`. |
 | OCR, PDF export, admin replay | planned | Tier 2 work |
-| Backend, evaluation, and URL scanner tests | Pass | `86 passed` with portable Python 3.13.17; includes auth, rate limits, prompt injection, agent failures/timeouts, redaction, scanner providers, and SSRF cases; see `docs/testing/test-report.md` |
+| Backend, evaluation, and URL scanner tests | Pass | `154 passed in 12.11s` with the project `.venv` Python 3.12.0; see `docs/testing/test-report.md`. |
 | Frontend tests/build | verified | `1 passed`; production build succeeded with a bundle-size warning |
 | Docker/PostgreSQL deployment | not verified | Docker is unavailable; PostgreSQL service/migrations not run |
 | GitHub remote/push | blocked | repository URL not provided |
 | `feature/evaluation` | Pass | Commit `fa938c3` was merged into `develop` |
 | `feature/url-scanner` | Pass | Merge commit `1e282e4` is present on `develop`; the Step 0 worktree was clean |
 | `feature/transaction-conversation` | Pass | Focused transaction/conversation suite: 62 passed (15 scam + 15 legitimate transaction examples; 15 scam + 17 legitimate conversation examples). Full backend suite: 148 passed in 10.16s using `.venv` Python 3.12. Frontend suite: 1 passed; production build succeeded. Includes genuine bill reminder false-positive checks. |
+| `feature/evaluation-v2` | Pass | Focused evaluation suite: 12 passed; full backend suite: 154 passed. Seed-42 test messages unchanged; dataset remains 32 rows. Evaluation report contains held-out metrics with 95% bootstrap CIs and 5-fold train+validation CV; LLM-only skipped because no key is configured. `backend/pyproject.toml` declares `langgraph` and `scikit-learn`. |

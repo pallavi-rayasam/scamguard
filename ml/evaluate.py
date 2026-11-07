@@ -5,26 +5,31 @@ import argparse
 from collections import Counter
 from contextlib import contextmanager
 import csv
+from difflib import SequenceMatcher
 import json
 import os
 from pathlib import Path
 import random
+import re
 import sys
+import unicodedata
 from typing import Iterator
 
 import httpx
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_PATH = ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
-REQUIRED_COLUMNS = ("text", "label", "category", "source", "split")
+REQUIRED_COLUMNS = ("text", "label", "category", "source", "author", "split")
 LABELS = ("legitimate", "scam")
 SPLITS = ("train", "validation", "test")
 RISK_THRESHOLD = 25
+BOOTSTRAP_ITERATIONS = 2000
 
 
 def load_dataset(path: str | Path) -> list[dict[str, str]]:
@@ -47,8 +52,8 @@ def load_dataset(path: str | Path) -> list[dict[str, str]]:
                 raise ValueError(f"Row {line} has empty text")
             if row["label"] not in LABELS:
                 raise ValueError(f"Row {line} label must be one of: {', '.join(LABELS)}")
-            if not row["category"] or not row["source"]:
-                raise ValueError(f"Row {line} needs category and source values")
+            if not row["category"] or not row["source"] or not row["author"]:
+                raise ValueError(f"Row {line} needs category, source, and author values")
             if row["split"] not in ("", "auto", *SPLITS):
                 raise ValueError(f"Row {line} split must be auto, train, validation, or test")
             rows.append(row)
@@ -65,8 +70,18 @@ def split_dataset(rows: list[dict[str, str]], seed: int = 42) -> dict[str, list[
         if any(not result[name] for name in SPLITS):
             raise ValueError("Declared split column must contain train, validation, and test rows")
         return result
+    if split_values & set(SPLITS):
+        if not split_values <= {"", "auto", *SPLITS}:
+            raise ValueError("Split values must be auto, blank, train, validation, or test")
+        automatic = [dict(row) for row in rows if row["split"] in ("", "auto")]
+        result = split_dataset(automatic, seed) if automatic else {name: [] for name in SPLITS}
+        for name in SPLITS:
+            result[name].extend(dict(row) for row in rows if row["split"] == name)
+        if any(not result[name] for name in SPLITS):
+            raise ValueError("Combined automatic and explicit rows must populate train, validation, and test")
+        return result
     if not split_values <= {"", "auto"}:
-        raise ValueError("Use either all auto/blank splits or a complete set of declared splits")
+        raise ValueError("Use auto/blank splits or explicit train, validation, and test values")
 
     by_label: dict[str, list[dict[str, str]]] = {label: [] for label in LABELS}
     for row in rows:
@@ -96,6 +111,54 @@ def split_dataset(rows: list[dict[str, str]], seed: int = 42) -> dict[str, list[
     return result
 
 
+def _normalized_leakage_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    return " ".join(re.findall(r"\w+", normalized, flags=re.UNICODE))
+
+
+def _leakage_match_kind(left: str, right: str) -> tuple[str | None, float]:
+    left_norm = _normalized_leakage_text(left)
+    right_norm = _normalized_leakage_text(right)
+    if left_norm == right_norm:
+        return "exact", 1.0
+    if not left_norm or not right_norm:
+        return None, 0.0
+    sequence_ratio = SequenceMatcher(None, left_norm, right_norm, autojunk=False).ratio()
+    left_tokens, right_tokens = set(left_norm.split()), set(right_norm.split())
+    union = left_tokens | right_tokens
+    token_jaccard = len(left_tokens & right_tokens) / len(union) if union else 0.0
+    if sequence_ratio >= 0.92 or (min(len(left_tokens), len(right_tokens)) >= 5 and token_jaccard >= 0.85):
+        return "near_duplicate", max(sequence_ratio, token_jaccard)
+    return None, max(sequence_ratio, token_jaccard)
+
+
+def find_test_train_leakage(splits: dict[str, list[dict[str, str]]]) -> list[dict]:
+    """Find exact or near-duplicate test examples also present in the training split."""
+    matches = []
+    for test_index, test_row in enumerate(splits.get("test", [])):
+        for train_index, train_row in enumerate(splits.get("train", [])):
+            kind, similarity = _leakage_match_kind(test_row["text"], train_row["text"])
+            if kind:
+                matches.append({
+                    "test_index": test_index,
+                    "train_index": train_index,
+                    "kind": kind,
+                    "similarity": round(similarity, 4),
+                })
+    return matches
+
+
+def assert_no_test_train_leakage(splits: dict[str, list[dict[str, str]]]) -> None:
+    matches = find_test_train_leakage(splits)
+    if matches:
+        first = matches[0]
+        raise ValueError(
+            "test/train leakage: test row "
+            f"{first['test_index']} matches train row {first['train_index']} "
+            f"({first['kind']}, similarity={first['similarity']})"
+        )
+
+
 def _binary_metrics(actual: list[str], predicted: list[str]) -> dict:
     if len(actual) != len(predicted) or not actual:
         raise ValueError("Metrics require equally sized, non-empty label lists")
@@ -115,6 +178,37 @@ def _binary_metrics(actual: list[str], predicted: list[str]) -> dict:
         "false_positive_rate": fp / (fp + tn) if fp + tn else None,
         "false_negative_rate": fn / (fn + tp) if fn + tp else None,
     }
+
+
+def bootstrap_confidence_intervals(
+    actual: list[str], predicted: list[str], seed: int = 42, iterations: int = BOOTSTRAP_ITERATIONS
+) -> dict[str, dict[str, float | None]]:
+    """Stratified paired bootstrap percentile intervals for binary metrics."""
+    if len(actual) != len(predicted) or not actual:
+        raise ValueError("Bootstrap intervals require equally sized, non-empty label lists")
+    if iterations < 1:
+        raise ValueError("Bootstrap iterations must be positive")
+    indices_by_label = {label: [i for i, value in enumerate(actual) if value == label] for label in LABELS}
+    rng = random.Random(seed)
+    metric_names = ("accuracy", "precision_scam", "recall_scam", "f1_scam", "false_positive_rate", "false_negative_rate")
+    samples: dict[str, list[float]] = {name: [] for name in metric_names}
+    for _ in range(iterations):
+        indices = [index for group in indices_by_label.values() for index in (rng.choices(group, k=len(group)) if group else [])]
+        metrics = _binary_metrics([actual[i] for i in indices], [predicted[i] for i in indices])
+        for name in metric_names:
+            value = metrics[name]
+            if value is not None:
+                samples[name].append(float(value))
+    intervals: dict[str, dict[str, float | None]] = {}
+    for name, values in samples.items():
+        ordered = sorted(values)
+        if not ordered:
+            intervals[name] = {"lower": None, "upper": None}
+            continue
+        lower = ordered[int(0.025 * (len(ordered) - 1))]
+        upper = ordered[int(0.975 * (len(ordered) - 1))]
+        intervals[name] = {"lower": lower, "upper": upper}
+    return intervals
 
 
 def _choose_threshold(actual: list[str], probabilities: list[float]) -> float:
@@ -216,8 +310,64 @@ class OpenAITextClassifier:
         return output
 
 
-def _evaluate_predictions(rows: list[dict[str, str]], predictions: list[str]) -> dict:
-    return _binary_metrics([row["label"] for row in rows], predictions)
+def _evaluate_predictions(rows: list[dict[str, str]], predictions: list[str], seed: int = 42) -> dict:
+    actual = [row["label"] for row in rows]
+    metrics = _binary_metrics(actual, predictions)
+    metrics["confidence_intervals_95"] = bootstrap_confidence_intervals(actual, predictions, seed=seed, iterations=BOOTSTRAP_ITERATIONS)
+    return metrics
+
+
+def cross_validate_train_validation(
+    rows: list[dict[str, str]], seed: int = 42, allow_external: bool = False, llm_classifier: OpenAITextClassifier | None = None
+) -> dict[str, dict]:
+    """Run five-fold out-of-fold evaluation on train+validation rows only."""
+    labels = [row["label"] for row in rows]
+    counts = Counter(labels)
+    if min(counts.get(label, 0) for label in LABELS) < 5:
+        raise ValueError("Five-fold cross-validation requires at least five rows per label in train+validation")
+    model_names = ["tfidf_logistic_regression", "current_rules_scoring", "full_pipeline"]
+    if llm_classifier is not None:
+        model_names.append("llm_only")
+    out_of_fold: dict[str, list[str | None]] = {name: [None] * len(rows) for name in model_names}
+    fold_metrics: dict[str, list[dict]] = {name: [] for name in model_names}
+    splitter = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
+    texts = [row["text"] for row in rows]
+    for train_indices, heldout_indices in splitter.split(texts, labels):
+        fold_train = [rows[int(i)] for i in train_indices]
+        heldout = [rows[int(i)] for i in heldout_indices]
+        assert_no_test_train_leakage({"train": fold_train, "test": heldout})
+        fold_model = Pipeline([
+            ("tfidf", TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True, max_features=20000)),
+            ("classifier", LogisticRegression(max_iter=2000, class_weight="balanced", random_state=seed)),
+        ])
+        fold_model.fit([row["text"] for row in fold_train], [row["label"] for row in fold_train])
+        fold_predictions = {
+            "tfidf_logistic_regression": ["scam" if score >= 0.5 else "legitimate" for score in _positive_probabilities(fold_model, [row["text"] for row in heldout])],
+            "current_rules_scoring": [_rules_prediction(row["text"]) for row in heldout],
+            "full_pipeline": [_full_pipeline_prediction(row["text"], allow_external=allow_external) for row in heldout],
+        }
+        if llm_classifier is not None:
+            fold_predictions["llm_only"] = [llm_classifier.classify(row["text"]) for row in heldout]
+        actual = [row["label"] for row in heldout]
+        for name, predictions in fold_predictions.items():
+            for index, prediction in zip(heldout_indices, predictions, strict=True):
+                out_of_fold[name][int(index)] = prediction
+            fold_metrics[name].append(_binary_metrics(actual, predictions))
+
+    results = {}
+    for name in model_names:
+        predictions = out_of_fold[name]
+        if any(value is None for value in predictions):
+            raise RuntimeError("Cross-validation did not produce a prediction for every row")
+        results[name] = {
+            "status": "completed",
+            "folds": 5,
+            "evaluation_rows": len(rows),
+            "baseline_threshold": 0.5 if name == "tfidf_logistic_regression" else None,
+            "fold_metrics": fold_metrics[name],
+            "out_of_fold_metrics": _evaluate_predictions(rows, [str(value) for value in predictions], seed=seed + 100),
+        }
+    return results
 
 
 def evaluate_dataset(
@@ -225,6 +375,7 @@ def evaluate_dataset(
 ) -> dict:
     splits = split_dataset(rows, seed)
     train, validation, test = (splits[name] for name in SPLITS)
+    assert_no_test_train_leakage(splits)
     model = Pipeline([
         ("tfidf", TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True, max_features=20000)),
         ("classifier", LogisticRegression(max_iter=2000, class_weight="balanced", random_state=seed)),
@@ -245,22 +396,23 @@ def evaluate_dataset(
     models = {
         "tfidf_logistic_regression": {
             "status": "completed", "threshold_selected_on": "validation", "threshold": threshold,
-            "validation": _evaluate_predictions(validation, baseline_for(validation)),
-            "test": _evaluate_predictions(test, baseline_for(test)),
+            "validation": _evaluate_predictions(validation, baseline_for(validation), seed=seed + 1),
+            "test": _evaluate_predictions(test, baseline_for(test), seed=seed + 2),
         },
         "current_rules_scoring": {
             "status": "completed", "scam_threshold_score": RISK_THRESHOLD,
-            "validation": _evaluate_predictions(validation, rules_for(validation)),
-            "test": _evaluate_predictions(test, rules_for(test)),
+            "validation": _evaluate_predictions(validation, rules_for(validation), seed=seed + 3),
+            "test": _evaluate_predictions(test, rules_for(test), seed=seed + 4),
         },
         "full_pipeline": {
             "status": "completed", "scam_threshold_score": RISK_THRESHOLD,
             "external_lookups_enabled": allow_external,
-            "validation": _evaluate_predictions(validation, pipeline_for(validation)),
-            "test": _evaluate_predictions(test, pipeline_for(test)),
+            "validation": _evaluate_predictions(validation, pipeline_for(validation), seed=seed + 5),
+            "test": _evaluate_predictions(test, pipeline_for(test), seed=seed + 6),
         },
     }
 
+    llm_classifier = None
     if include_llm:
         from app.core.config import settings
 
@@ -268,22 +420,31 @@ def evaluate_dataset(
             models["llm_only"] = {"status": "skipped", "reason": "OPENAI_API_KEY is not configured"}
         else:
             try:
-                classifier = OpenAITextClassifier()
+                llm_classifier = OpenAITextClassifier()
                 models["llm_only"] = {
-                    "status": "completed", "model": classifier.model,
-                    "validation": _evaluate_predictions(validation, [classifier.classify(row["text"]) for row in validation]),
-                    "test": _evaluate_predictions(test, [classifier.classify(row["text"]) for row in test]),
+                    "status": "completed", "model": llm_classifier.model,
+                    "validation": _evaluate_predictions(validation, [llm_classifier.classify(row["text"]) for row in validation], seed=seed + 1),
+                    "test": _evaluate_predictions(test, [llm_classifier.classify(row["text"]) for row in test], seed=seed + 2),
                 }
             except (httpx.HTTPError, RuntimeError, ValueError) as exc:
                 models["llm_only"] = {"status": "failed", "reason": type(exc).__name__}
     else:
         models["llm_only"] = {"status": "skipped", "reason": "LLM evaluation not requested; use --include-llm"}
 
+    train_validation = train + validation
+    cross_validation = cross_validate_train_validation(train_validation, seed=seed, allow_external=allow_external, llm_classifier=llm_classifier)
+    if "llm_only" not in cross_validation:
+        cross_validation["llm_only"] = {"status": "skipped", "reason": models["llm_only"].get("reason", "LLM classifier was unavailable")}
+    for model_name, result in cross_validation.items():
+        models[model_name]["cross_validation"] = result
+
     return {
         "dataset_rows": len(rows),
         "seed": seed,
         "split_counts": {name: len(splits[name]) for name in SPLITS},
         "label_counts_by_split": {name: dict(Counter(row["label"] for row in splits[name])) for name in SPLITS},
+        "cross_validation_scope": "Stratified 5-fold CV on train+validation only; held-out test rows are excluded",
+        "bootstrap": {"replicates": BOOTSTRAP_ITERATIONS, "confidence_level": 0.95, "method": "stratified paired percentile bootstrap; class counts preserved"},
         "models": models,
     }
 
@@ -292,7 +453,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv_path", nargs="?", default=ROOT / "ml/data/indian_scam_examples.csv", type=Path)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--include-llm", action="store_true", help="Send redacted validation/test samples to OpenAI when a key is configured")
+    parser.add_argument("--include-llm", action="store_true", help="Send redacted validation/test/CV samples to OpenAI when a key is configured")
     parser.add_argument("--allow-external", action="store_true", help="Allow provider network calls from the full-pipeline evaluation")
     parser.add_argument("--output", type=Path, help="Optional path for the JSON report")
     args = parser.parse_args()
