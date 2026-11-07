@@ -55,7 +55,7 @@ class ExtractedURL(Base):
 
 class AgentRun(Base):
     __tablename__ = "agent_runs"
-    __table_args__ = (CheckConstraint("status IN ('completed','skipped','failed','timed_out','unavailable')", name="ck_agent_runs_status"),)
+    __table_args__ = (CheckConstraint("status IN ('completed','skipped','failed','timed_out')", name="ck_agent_runs_status"),)
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     investigation_id: Mapped[UUID] = mapped_column(ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False)
     agent_name: Mapped[str] = mapped_column(String(80), nullable=False)

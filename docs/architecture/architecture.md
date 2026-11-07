@@ -36,7 +36,7 @@ flowchart LR
 | `users` | Account and role | unique normalized email; `user`/`admin` role |
 | `investigations` | Redacted input and final report | belongs to user; indexed by `(user_id, created_at)`, risk level, category |
 | `extracted_urls` | URL observations per report | belongs to investigation; stores normalized URL and structural findings |
-| `agent_runs` | Per-agent lifecycle audit | status constrained to completed/skipped/failed/timed_out/unavailable |
+| `agent_runs` | Per-agent lifecycle audit | status constrained to completed/skipped/failed/timed_out; provider unavailability is stored in threat-intel results |
 | `evidence` | Source-tagged findings | verification level constrained to verified/heuristic/llm_inferred |
 | `threat_intel_results` | Provider response/availability record | provider, status, checked timestamp, response detail; no fabricated match |
 | `scam_categories` | Extensible categories | unique code, language, display name |

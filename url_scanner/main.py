@@ -37,7 +37,7 @@ class ScannerRateLimitMiddleware:
         self._events: dict[str, deque[float]] = defaultdict(deque)
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope.get("path") != "/scan":
+        if scope["type"] != "http" or scope.get("path") not in {"/scan", "/analyze", "/reputation"}:
             await self.app(scope, receive, send)
             return
         client = scope.get("client")
@@ -68,7 +68,7 @@ def _score(findings: list[dict]) -> tuple[int, str]:
     return score, level
 
 
-def scan_url(url: str) -> dict:
+def scan_url(url: str, include_intel: bool = True) -> dict:
     findings = analyze_url(url)
     try:
         target = validate_target(url)
@@ -126,7 +126,7 @@ def scan_url(url: str) -> dict:
     except FetchUnavailable as exc:
         fetch_result = {"status": "unavailable", "reason": exc.code}
 
-    intel_results = check_reputation(target.origin)
+    intel_results = check_reputation(target.origin) if include_intel else []
     for result in intel_results:
         if result.get("is_malicious") is True:
             findings.append({
@@ -154,6 +154,44 @@ def scan_url(url: str) -> dict:
 def health() -> dict:
     return {"status": "available", "service": "url-scanner"}
 
+
+@app.post("/analyze")
+def analyze(payload: ScanRequest) -> dict:
+    """Run URL structure and guarded fetch checks without reputation providers."""
+    return scan_url(payload.url, include_intel=False)
+
+
+@app.post("/reputation")
+def reputation(payload: ScanRequest) -> dict:
+    """Revalidate a public target, then return reputation-provider outcomes."""
+    try:
+        target = validate_target(payload.url)
+    except SSRFBlocked as exc:
+        return {
+            "status": "blocked",
+            "reason": exc.code,
+            "origin": None,
+            "threat_intel_results": [
+                {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "target_not_publicly_validated"}
+                for provider in ("google_safe_browsing", "virustotal")
+            ],
+        }
+    except FetchUnavailable as exc:
+        return {
+            "status": "unavailable",
+            "reason": exc.code,
+            "origin": None,
+            "threat_intel_results": [
+                {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "target_not_publicly_validated"}
+                for provider in ("google_safe_browsing", "virustotal")
+            ],
+        }
+    return {
+        "status": "completed",
+        "reason": None,
+        "origin": target.origin,
+        "threat_intel_results": check_reputation(target.origin),
+    }
 
 @app.post("/scan")
 def scan(payload: ScanRequest) -> dict:
