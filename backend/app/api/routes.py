@@ -12,7 +12,7 @@ from app.core.security import admin_user, current_user, csrf_token, enforce_csrf
 from app.db.session import get_db
 from app.detection.normalize import load_categories
 from app.models.entities import AgentRun, AuditLog, Evidence, ExtractedURL, Feedback, Investigation, Recommendation, ThreatIntelResult, User
-from app.schemas.common import FeedbackRequest, InvestigationRequest, LoginRequest, RegisterRequest, UserResponse
+from app.schemas.common import ConversationRequest, FeedbackRequest, InvestigationRequest, LoginRequest, RegisterRequest, TransactionRequest, UserResponse
 
 router = APIRouter(prefix="/api")
 
@@ -72,24 +72,14 @@ def me(user: User = Depends(current_user)) -> User:
     return user
 
 
-@router.post("/investigations/text", status_code=status.HTTP_201_CREATED)
-def create_text_investigation(
-    payload: InvestigationRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: User = Depends(current_user),
-) -> dict:
-    enforce_csrf(request)
-    report = investigate(payload.text, payload.input_type)
-    # The workflow returns only redacted text to prevent sensitive input from reaching persistence.
-    # Preserve the sanitized submitted text separately from the public-facing report.
+def _persist_investigation(report: dict, submitted_text: str, input_type: str, db: Session, user: User) -> dict:
     from app.detection.normalize import normalize_text, redact_sensitive, redact_urls_in_text, extract_urls
-    normalized = normalize_text(payload.text)
+    normalized = normalize_text(submitted_text)
     safe, _ = redact_sensitive(normalized)
     safe = redact_urls_in_text(safe, extract_urls(normalized))
     investigation = Investigation(
         user_id=user.id,
-        input_type=payload.input_type,
+        input_type=input_type,
         redacted_content=safe[:12000],
         category=report["category"],
         risk_score=report["risk_score"],
@@ -138,11 +128,64 @@ def create_text_investigation(
         ))
     for advice in report.get("recommendations", []):
         db.add(Recommendation(investigation_id=investigation.id, advice_type="general", text=advice))
-    db.add(AuditLog(actor_id=user.id, event="investigation.created", metadata_json={"investigation_id": str(investigation.id), "input_type": payload.input_type}))
+    db.add(AuditLog(actor_id=user.id, event="investigation.created", metadata_json={"investigation_id": str(investigation.id), "input_type": input_type}))
     db.commit()
     db.refresh(investigation)
     return {"id": investigation.id, **report, "created_at": investigation.created_at}
 
+
+@router.post("/investigations/text", status_code=status.HTTP_201_CREATED)
+def create_text_investigation(
+    payload: InvestigationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    enforce_csrf(request)
+    report = investigate(payload.text, payload.input_type)
+    return _persist_investigation(report, payload.text, payload.input_type, db, user)
+
+
+@router.post("/investigations/conversation", status_code=status.HTTP_201_CREATED)
+def create_conversation_investigation(
+    payload: ConversationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    enforce_csrf(request)
+    messages = [item.model_dump() for item in payload.messages]
+    submitted_text = "\n".join(f"{item['sender']}: {item['text']}" for item in messages)
+    report = investigate(submitted_text, "conversation", conversation_messages=messages)
+    return _persist_investigation(report, submitted_text, "conversation", db, user)
+
+
+@router.post("/investigations/transaction", status_code=status.HTTP_201_CREATED)
+def create_transaction_investigation(
+    payload: TransactionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    enforce_csrf(request)
+    submitted_text = "\n".join(part for part in (payload.description, payload.reason, payload.related_chat) if part)
+    messages = []
+    if payload.related_chat.strip():
+        from app.detection.conversation import parse_conversation_text
+        messages = parse_conversation_text(payload.related_chat)
+    report = investigate(
+        submitted_text,
+        "transaction",
+        conversation_messages=messages,
+        transaction_context={
+            "description": payload.description,
+            "claimed_recipient": payload.claimed_recipient,
+            "reason": payload.reason,
+            "amount": payload.amount,
+            "related_chat": payload.related_chat,
+        },
+    )
+    return _persist_investigation(report, submitted_text, "transaction", db, user)
 
 @router.get("/investigations")
 def list_investigations(

@@ -28,6 +28,7 @@ export type Report = {
   evidence: Array<Record<string, unknown>>; agents: Array<Record<string, unknown>>; urls: string[]
   threat_intel_results: Array<Record<string, unknown>>; data_availability: Record<string, unknown>
   recommendations: string[]; explanation: string; limitations: string[]; created_at: string
+  transaction_advisory?: { advisory_only: boolean; advisory: string; recipient_identity_check: string; claimed_recipient_provided: boolean; amount_provided: boolean; payment_initiated: boolean; risk_score: number; risk_level: string; recommendations: string[] } | null
 }
 
 export const api = {
@@ -36,6 +37,8 @@ export const api = {
   register: (email: string, password: string) => request<User>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   scan: (text: string, input_type: string) => request<Report>('/investigations/text', { method: 'POST', body: JSON.stringify({ text, input_type }) }),
+  conversation: (messages: Array<{ sender: string; text: string }>) => request<Report>("/investigations/conversation", { method: 'POST', body: JSON.stringify({ messages }) }),
+  transaction: (payload: { description: string; claimed_recipient: string; reason: string; amount?: number; related_chat: string }) => request<Report>("/investigations/transaction", { method: 'POST', body: JSON.stringify(payload) }),
   history: (filters: { q?: string; risk_level?: string } = {}) => {
     const query = new URLSearchParams()
     if (filters.q) query.set('q', filters.q)
