@@ -52,6 +52,12 @@ For PostgreSQL through Docker Compose, set `POSTGRES_DB`, `POSTGRES_USER`, and a
 
 For URL scanning outside Compose, also run `pip install -r url_scanner/requirements.txt` and start `uvicorn url_scanner.main:app --host 127.0.0.1 --port 8001` from the repository root. Set `URL_SCANNER_URL=http://localhost:8001` for the backend. Compose starts the scanner on its private service network without publishing port 8001 to the host.
 
+### Admin analytics and first administrator
+
+After applying the database migrations, create the first administrator from the `backend/` directory with `python -m app.cli create-admin`. The command prompts for an email and a new password twice, stores only its Argon2 hash, and refuses if an administrator already exists. It has no default password and does not change an existing user's role. Run it from a trusted local or production operations shell with access to the configured database; do not expose it as an API endpoint.
+
+Sign in with that account to see **Admin analytics** in the workspace navigation. The dashboard aggregates users, investigations per UTC day, matched categories, risk levels, provider failures, agent failures, average processing time, and feedback from database records. Average processing time is the mean of summed agent durations for investigations that have recorded agent runs. The `/api/admin/analytics` endpoint returns 403 to non-admin accounts.
+
 ## Configuration
 
 Secrets belong in environment variables and must never be committed. `APP_SECRET_KEY` is required for authentication and must contain at least 32 characters; generate one with the command above and keep it private. External threat-intel providers are optional; unconfigured or failed providers must appear as unavailable in reports. The selected provider is OpenAI. LLM explanation calls remain disabled until `OPENAI_API_KEY` is supplied; LLM text is never treated as evidence.

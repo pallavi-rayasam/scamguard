@@ -16,7 +16,8 @@
 
 - [x] Screenshot OCR with JPEG/PNG magic-byte validation, 5 MB cap, OpenCV preprocessing, Tesseract, redaction, and embedded links left unopened
 - [x] PDF report export from stored snapshots with verification labels, provider/agent status, local timestamps, recommendations, limitations, and owner/admin access control
-- [ ] Admin analytics/replay UI and failure/processing-time metrics
+- [x] Role-gated admin database analytics for user, investigation, provider, agent, processing-time, and feedback counts
+- [ ] Admin replay UI
 - [ ] Held-out labelled evaluation set and baseline/LLM-only/multi-agent comparison
 - [ ] E2E Playwright tests, including PDF download
 

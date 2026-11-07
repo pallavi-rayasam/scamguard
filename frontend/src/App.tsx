@@ -8,8 +8,9 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { api, type Report, type User } from './api'
 import { UrlResults } from './UrlResults'
 import { categoryLabel, formatLocalTimestamp } from './reportFormatting'
+import { AdminAnalyticsPage } from './AdminAnalyticsPage'
 
-type Page = 'home' | 'login' | 'dashboard' | 'scanner' | 'history' | 'awareness' | 'settings' | 'report'
+type Page = 'home' | 'login' | 'dashboard' | 'scanner' | 'history' | 'awareness' | 'settings' | 'report' | 'admin'
 type AuthContextType = { user: User | null; setUser: (user: User | null) => void; signOut: () => Promise<void> }
 const AuthContext = createContext<AuthContextType | null>(null)
 const useAuth = () => {
@@ -27,7 +28,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: boolean 
 
 function readPage(): Page {
   const path = location.hash.replace('#/', '').split('/')[0]
-  return (['home', 'login', 'dashboard', 'scanner', 'history', 'awareness', 'settings', 'report'].includes(path) ? path : 'home') as Page
+  return (['home', 'login', 'dashboard', 'scanner', 'history', 'awareness', 'settings', 'report', 'admin'].includes(path) ? path : 'home') as Page
 }
 function readReportId() { return location.hash.replace('#/', '').split('/')[1] ?? '' }
 
@@ -52,7 +53,7 @@ export default function App() {
   const auth = useMemo(() => ({ user, setUser, signOut }), [user])
 
   if (!loaded) return <main className="center-page"><LoaderCircle className="spin" /></main>
-  const needsAuth = ['dashboard', 'scanner', 'history', 'awareness', 'settings', 'report'].includes(page)
+  const needsAuth = ['dashboard', 'scanner', 'history', 'awareness', 'settings', 'report', 'admin'].includes(page)
   if (needsAuth && !user) return <AuthContext.Provider value={auth}><LoginPage navigate={navigate} /></AuthContext.Provider>
   if (page === 'home' && !user) return <LandingPage navigate={navigate} />
   if (page === 'login' || page === 'home') return <AuthContext.Provider value={auth}><LoginPage navigate={navigate} /></AuthContext.Provider>
@@ -156,11 +157,12 @@ const navItems: Array<{ page: Page; label: string; icon: ReactNode }> = [
 function Shell({ page, navigate, reportId }: { page: Page; navigate: (page: Page, id?: string) => void; reportId: string }) {
   const { user, signOut } = useAuth()
   const [mobileNav, setMobileNav] = useState(false)
-  return <div className="app-shell"><aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}><div className="sidebar-head"><Brand /><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="Close navigation"><X size={18} /></button></div><div className="workspace-label">WORKSPACE</div><nav>{navItems.map(item => <button key={item.page} className={`nav-item ${page === item.page ? 'active' : ''}`} onClick={() => { navigate(item.page); setMobileNav(false) }}>{item.icon}<span>{item.label}</span>{page === item.page && <ChevronRight className="nav-chevron" size={15} />}</button>)}</nav><div className="sidebar-bottom"><div className="safety-tip"><Sparkles size={16} /><div><strong>Safety note</strong><span>We never initiate payments or verify account holders.</span></div></div><button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} /><span>Settings</span></button><div className="user-row"><div className="avatar">{user?.email.slice(0, 1).toUpperCase()}</div><div className="user-meta"><strong>{user?.email}</strong><span>Personal workspace</span></div><button className="icon-button logout-button" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button></div></div></aside>
+  const visibleNav = user?.role === 'admin' ? [...navItems, { page: 'admin' as Page, label: 'Admin analytics', icon: <LayoutDashboard size={18} /> }] : navItems
+  return <div className="app-shell"><aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}><div className="sidebar-head"><Brand /><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="Close navigation"><X size={18} /></button></div><div className="workspace-label">WORKSPACE</div><nav>{visibleNav.map(item => <button key={item.page} className={`nav-item ${page === item.page ? 'active' : ''}`} onClick={() => { navigate(item.page); setMobileNav(false) }}>{item.icon}<span>{item.label}</span>{page === item.page && <ChevronRight className="nav-chevron" size={15} />}</button>)}</nav><div className="sidebar-bottom"><div className="safety-tip"><Sparkles size={16} /><div><strong>Safety note</strong><span>We never initiate payments or verify account holders.</span></div></div><button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} /><span>Settings</span></button><div className="user-row"><div className="avatar">{user?.email.slice(0, 1).toUpperCase()}</div><div className="user-meta"><strong>{user?.email}</strong><span>Personal workspace</span></div><button className="icon-button logout-button" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button></div></div></aside>
     {mobileNav && <button className="scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
-    <main className="main-area"><header className="topbar"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{pageTitle(page)}</strong></div><div className="topbar-right"><span className="secure-pill"><span className="status-dot" />Private session</span></div></header><div className="content-area">{page === 'dashboard' && <DashboardPage navigate={navigate} />}{page === 'scanner' && <ScannerPage navigate={navigate} />}{page === 'history' && <HistoryPage navigate={navigate} />}{page === 'awareness' && <AwarenessPage />}{page === 'settings' && <SettingsPage navigate={navigate} />}{page === 'report' && <ReportPage id={reportId} navigate={navigate} />}</div></main></div>
+    <main className="main-area"><header className="topbar"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{pageTitle(page)}</strong></div><div className="topbar-right"><span className="secure-pill"><span className="status-dot" />Private session</span></div></header><div className="content-area">{page === 'dashboard' && <DashboardPage navigate={navigate} />}{page === 'scanner' && <ScannerPage navigate={navigate} />}{page === 'history' && <HistoryPage navigate={navigate} />}{page === 'awareness' && <AwarenessPage />}{page === 'settings' && <SettingsPage navigate={navigate} />}{page === 'report' && <ReportPage id={reportId} navigate={navigate} />}{page === 'admin' && <AdminAnalyticsPage />}</div></main></div>
 }
-function pageTitle(page: Page) { return ({ dashboard: 'Overview', scanner: 'New investigation', history: 'History', awareness: 'Awareness centre', settings: 'Settings', report: 'Investigation report', home: 'Home', login: 'Sign in' })[page] }
+function pageTitle(page: Page) { return ({ dashboard: 'Overview', scanner: 'New investigation', history: 'History', awareness: 'Awareness centre', settings: 'Settings', report: 'Investigation report', admin: 'Admin analytics', home: 'Home', login: 'Sign in' })[page] }
 
 function DashboardPage({ navigate }: { navigate: (page: Page, id?: string) => void }) {
   const [stats, setStats] = useState<{ total_investigations: number; risk_distribution: Record<string, number>; category_distribution: Record<string, number> } | null>(null)

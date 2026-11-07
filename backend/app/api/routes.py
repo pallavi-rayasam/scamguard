@@ -371,9 +371,79 @@ def scam_awareness() -> dict:
 
 @router.get("/admin/analytics")
 def admin_analytics(_: User = Depends(admin_user), db: Session = Depends(get_db)) -> dict:
-    total = db.scalar(select(func.count()).select_from(Investigation)) or 0
-    failures = db.scalar(select(func.count()).select_from(AgentRun).where(AgentRun.status.in_(["failed", "timed_out", "unavailable"]))) or 0
-    return {"total_investigations": total, "agent_failures": failures}
+    user_counts = {
+        role: count
+        for role, count in db.execute(select(User.role, func.count()).group_by(User.role))
+    }
+
+    investigations = db.execute(
+        select(Investigation.created_at, Investigation.category, Investigation.risk_level)
+    ).all()
+    investigations_per_day: dict[str, int] = {}
+    category_distribution: dict[str, int] = {}
+    risk_distribution: dict[str, int] = {}
+    uncategorized = {"other_suspicious", "other suspicious", "no scam pattern detected"}
+    for created_at, category, risk_level in investigations:
+        day = _utc_timestamp(created_at).date().isoformat()
+        investigations_per_day[day] = investigations_per_day.get(day, 0) + 1
+        if category and category.strip().casefold() not in uncategorized:
+            category_distribution[category] = category_distribution.get(category, 0) + 1
+        risk_distribution[risk_level] = risk_distribution.get(risk_level, 0) + 1
+
+    provider_failure_statuses: dict[str, dict[str, int]] = {}
+    for provider, provider_status, count in db.execute(
+        select(ThreatIntelResult.provider, ThreatIntelResult.status, func.count())
+        .where(ThreatIntelResult.status.in_(["failed", "timed_out", "unavailable"]))
+        .group_by(ThreatIntelResult.provider, ThreatIntelResult.status)
+    ):
+        provider_failure_statuses.setdefault(provider, {})[provider_status] = count
+    provider_failure_counts = {
+        provider: sum(status_counts.values())
+        for provider, status_counts in provider_failure_statuses.items()
+    }
+
+    agent_failure_statuses: dict[str, dict[str, int]] = {}
+    for agent_name, agent_status, count in db.execute(
+        select(AgentRun.agent_name, AgentRun.status, func.count())
+        .where(AgentRun.status.in_(["failed", "timed_out"]))
+        .group_by(AgentRun.agent_name, AgentRun.status)
+    ):
+        agent_failure_statuses.setdefault(agent_name, {})[agent_status] = count
+    agent_failure_counts = {
+        agent: sum(status_counts.values())
+        for agent, status_counts in agent_failure_statuses.items()
+    }
+
+    per_investigation_duration = (
+        select(AgentRun.investigation_id, func.sum(AgentRun.duration_ms).label("duration_ms"))
+        .group_by(AgentRun.investigation_id)
+        .subquery()
+    )
+    average_duration = db.scalar(select(func.avg(per_investigation_duration.c.duration_ms)))
+
+    feedback_counts = {
+        rating: count
+        for rating, count in db.execute(select(Feedback.rating, func.count()).group_by(Feedback.rating))
+    }
+    total_users = sum(user_counts.values())
+
+    return {
+        "total_users": total_users,
+        "user_counts": user_counts,
+        "total_investigations": len(investigations),
+        "investigations_per_day": [
+            {"date": day, "count": investigations_per_day[day]}
+            for day in sorted(investigations_per_day)
+        ],
+        "category_distribution": category_distribution,
+        "risk_distribution": risk_distribution,
+        "provider_failure_counts": provider_failure_counts,
+        "provider_failure_statuses": provider_failure_statuses,
+        "agent_failure_counts": agent_failure_counts,
+        "agent_failure_statuses": agent_failure_statuses,
+        "average_processing_time_ms": round(float(average_duration)) if average_duration is not None else None,
+        "feedback_counts": feedback_counts,
+    }
 
 
 @router.get("/admin/system-health")
