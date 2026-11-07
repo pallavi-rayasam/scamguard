@@ -13,7 +13,8 @@ class Settings:
     cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
     database_url: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+psycopg://scamguard:replace-me@localhost:5432/scamguard",
+        "sqlite:///./local.db" if os.getenv("APP_ENV", "development") == "development"
+        else "postgresql+psycopg://scamguard:replace-me@localhost:5432/scamguard",
     )
     frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
     url_scanner_url: str = os.getenv("URL_SCANNER_URL", "")

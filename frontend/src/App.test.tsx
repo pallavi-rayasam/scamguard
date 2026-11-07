@@ -66,4 +66,13 @@ describe('authentication UI', () => {
     expect(submit.hasAttribute('disabled')).toBe(false)
     expect(submit.getAttribute('aria-busy')).toBe('false')
   })
+
+  it('shows the database outage message returned by the API', async () => {
+    mockRegister.mockRejectedValue(new Error('Database unavailable'))
+    await openRegistration()
+    fillValidRegistration()
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('Database unavailable')
+    expect(screen.getByRole('button', { name: 'Create account' }).hasAttribute('disabled')).toBe(false)
+  })
 })

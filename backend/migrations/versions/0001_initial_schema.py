@@ -1,4 +1,4 @@
-"""Initial PostgreSQL schema from SQLAlchemy metadata.
+"""Initial PostgreSQL/SQLite schema from SQLAlchemy metadata.
 
 Revision ID: 0001_initial_schema
 Revises:

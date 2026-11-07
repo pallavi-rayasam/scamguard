@@ -1,4 +1,4 @@
-"""Load the versioned seed catalogue into PostgreSQL."""
+"""Load the versioned seed catalogue into the configured SQL database."""
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
