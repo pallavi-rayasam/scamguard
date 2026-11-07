@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from app.core.security import admin_user, current_user, csrf_token, enforce_csrf
 from app.db.session import get_db
 from app.detection.normalize import load_categories
 from app.models.entities import AgentRun, AuditLog, Evidence, ExtractedURL, Feedback, Investigation, Recommendation, ThreatIntelResult, User
+from app.ocr import MAX_IMAGE_BYTES, ImageDecodeError, OCRTimeoutError, OCRUnavailableError, UnsupportedImageError, extract_text_from_image
 from app.schemas.common import ConversationRequest, FeedbackRequest, InvestigationRequest, LoginRequest, RegisterRequest, TransactionRequest, UserResponse
 
 router = APIRouter(prefix="/api")
@@ -193,6 +194,38 @@ def create_transaction_investigation(
         },
     )
     return _persist_investigation(report, submitted_text, "transaction", db, user)
+
+
+@router.post("/investigations/image", status_code=status.HTTP_201_CREATED)
+async def create_image_investigation(
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(current_user),
+) -> dict:
+    """Extract screenshot text and send it through the existing redacted pipeline."""
+    enforce_csrf(request)
+    try:
+        contents = file.file.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        file.file.close()
+    if len(contents) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image exceeds the 5 MB limit")
+    try:
+        extracted_text = extract_text_from_image(contents)
+    except UnsupportedImageError:
+        raise HTTPException(status_code=415, detail="Only JPEG and PNG images are supported") from None
+    except ImageDecodeError:
+        raise HTTPException(status_code=400, detail="Image content could not be decoded") from None
+    except OCRUnavailableError:
+        raise HTTPException(status_code=503, detail="OCR unavailable") from None
+    except OCRTimeoutError:
+        raise HTTPException(status_code=504, detail="OCR timed out; please retry with a smaller image") from None
+    if not extracted_text.strip():
+        raise HTTPException(status_code=422, detail="No readable text was found in the image")
+    report = investigate(extracted_text, "screenshot")
+    return _persist_investigation(report, extracted_text, "screenshot", db, user)
+
 
 @router.get("/investigations")
 def list_investigations(

@@ -53,7 +53,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   try {
     const method = options.method ?? 'GET'
     const headers = new Headers(options.headers)
-    if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
+    if (options.body && !isFormData && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase())) {
       if (!csrfToken) {
         const token = await fetch(`${API_BASE}/auth/csrf`, { credentials: 'include', signal: controller.signal })
@@ -96,6 +97,11 @@ export const api = {
   register: (email: string, password: string) => request<User>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) }),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
   scan: (text: string, input_type: string) => request<Report>('/investigations/text', { method: 'POST', body: JSON.stringify({ text, input_type }) }),
+  image: (file: File) => {
+    const body = new FormData()
+    body.append('file', file, file.name)
+    return request<Report>('/investigations/image', { method: 'POST', body })
+  },
   conversation: (messages: Array<{ sender: string; text: string }>) => request<Report>("/investigations/conversation", { method: 'POST', body: JSON.stringify({ messages }) }),
   transaction: (payload: { description: string; claimed_recipient: string; reason: string; amount?: number; related_chat: string }) => request<Report>("/investigations/transaction", { method: 'POST', body: JSON.stringify(payload) }),
   history: (filters: { q?: string; risk_level?: string } = {}) => {

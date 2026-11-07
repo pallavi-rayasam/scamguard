@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from './App'
 
-const { mockMe, mockLogin, mockRegister } = vi.hoisted(() => ({
+const { mockMe, mockLogin, mockRegister, mockImage } = vi.hoisted(() => ({
   mockMe: vi.fn(),
   mockLogin: vi.fn(),
   mockRegister: vi.fn(),
+  mockImage: vi.fn(),
 }))
-vi.mock('./api', () => ({ api: { me: mockMe, login: mockLogin, register: mockRegister } }))
+vi.mock('./api', () => ({ api: { me: mockMe, login: mockLogin, register: mockRegister, image: mockImage } }))
 
 afterEach(cleanup)
 
@@ -74,5 +75,25 @@ describe('authentication UI', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
     expect((await screen.findByRole('alert')).textContent).toContain('Database unavailable')
     expect(screen.getByRole('button', { name: 'Create account' }).hasAttribute('disabled')).toBe(false)
+  })
+})
+
+
+describe('screenshot upload UI', () => {
+  it('accepts JPEG/PNG screenshots and submits the selected image', async () => {
+    mockMe.mockResolvedValue({ id: 'user-id', email: 'member@example.com', role: 'user' })
+    mockImage.mockResolvedValue({ id: 'image-report' })
+    location.hash = '#/scanner'
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Check before you act' })
+    fireEvent.click(screen.getByRole('tab', { name: 'Screenshot' }))
+    const input = await screen.findByLabelText('Screenshot image') as HTMLInputElement
+    expect(input.accept).toBe('.jpg,.jpeg,.png,image/jpeg,image/png')
+    const file = new File(['image-bytes'], 'notice.png', { type: 'image/png' })
+    fireEvent.change(input, { target: { files: [file] } })
+    expect(await screen.findByText('notice.png')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Run investigation' }))
+    await waitFor(() => expect(mockImage).toHaveBeenCalledWith(file))
+    await waitFor(() => expect(location.hash).toBe('#/report/image-report'))
   })
 })
