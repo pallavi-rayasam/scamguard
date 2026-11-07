@@ -98,6 +98,20 @@ async function requestBlob(path: string): Promise<Blob> {
 }
 
 export type User = { id: string; email: string; role: string }
+export type AdminAnalytics = {
+  total_users: number
+  user_counts: Record<string, number>
+  total_investigations: number
+  investigations_per_day: Array<{ date: string; count: number }>
+  category_distribution: Record<string, number>
+  risk_distribution: Record<string, number>
+  provider_failure_counts: Record<string, number>
+  provider_failure_statuses: Record<string, Record<string, number>>
+  agent_failure_counts: Record<string, number>
+  agent_failure_statuses: Record<string, Record<string, number>>
+  average_processing_time_ms: number | null
+  feedback_counts: Record<string, number>
+}
 export type Investigation = { id: string; category: string | null; risk_score: number; risk_level: string; created_at: string }
 export type Report = {
   id: string; category: string | null; risk_score: number; risk_level: string; score_is_probability: boolean
@@ -135,6 +149,7 @@ export const api = {
     return requestBlob(path)
   },
   stats: () => request<{ total_investigations: number; risk_distribution: Record<string, number>; category_distribution: Record<string, number> }>('/dashboard/statistics'),
+  adminAnalytics: () => request<AdminAnalytics>('/admin/analytics'),
   categories: () => request<Array<{ code: string; name: string; language: string }>>('/scam-categories'),
   awareness: () => request<{ language: string; items: Array<{ title: string; body: string }> }>('/scam-awareness'),
   feedback: (investigation_id: string, rating: string) => request('/feedback', { method: 'POST', body: JSON.stringify({ investigation_id, rating }) }),

@@ -25,7 +25,7 @@ Base path: `/api`. Interactive OpenAPI docs are served at `/docs` when the FastA
 | `GET /api/dashboard/statistics` | user | `200` counts from persisted records only |
 | `GET /api/scam-categories` | no | `200` versioned English seed categories |
 | `GET /api/scam-awareness` | no | `200` English advisory items |
-| `GET /api/admin/analytics` | admin | `200` current aggregate counts |
+| `GET /api/admin/analytics` | admin | `200` database-backed user counts, investigations by UTC day, non-null matched categories, risk levels, provider and agent failure counts/statuses, average summed agent duration per investigation with runs, and feedback counts; non-admin users receive `403` |
 | `GET /api/admin/system-health` | admin | `200` configuration availability (database not probed) |
 
 Investigation input types currently accepted: text, sms, whatsapp, url, email, conversation, payment_request, transaction, and screenshot. Screenshots use input_type=screenshot through the multipart image endpoint. The scanner uses the single /text endpoint for the other text-based input types.

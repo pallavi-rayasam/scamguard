@@ -2,15 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from './App'
 
-const { mockMe, mockLogin, mockRegister, mockImage, mockReport, mockReportPdf } = vi.hoisted(() => ({
+const { mockMe, mockLogin, mockRegister, mockImage, mockReport, mockReportPdf, mockAdminAnalytics } = vi.hoisted(() => ({
   mockMe: vi.fn(),
   mockLogin: vi.fn(),
   mockRegister: vi.fn(),
   mockImage: vi.fn(),
   mockReport: vi.fn(),
   mockReportPdf: vi.fn(),
+  mockAdminAnalytics: vi.fn(),
 }))
-vi.mock('./api', () => ({ api: { me: mockMe, login: mockLogin, register: mockRegister, image: mockImage, report: mockReport, reportPdf: mockReportPdf } }))
+vi.mock('./api', () => ({ api: { me: mockMe, login: mockLogin, register: mockRegister, image: mockImage, report: mockReport, reportPdf: mockReportPdf, adminAnalytics: mockAdminAnalytics } }))
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -124,5 +125,47 @@ describe('report PDF download', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }))
     await waitFor(() => expect(mockReportPdf).toHaveBeenCalledWith('report-id'))
     expect(screen.getByRole('button', { name: 'Download PDF' }).hasAttribute('disabled')).toBe(false)
+  })
+})
+
+describe('admin analytics dashboard', () => {
+  it('shows database aggregates and navigation to an administrator', async () => {
+    mockMe.mockResolvedValue({ id: 'admin-id', email: 'admin@example.com', role: 'admin' })
+    mockAdminAnalytics.mockResolvedValue({
+      total_users: 3,
+      user_counts: { user: 2, admin: 1 },
+      total_investigations: 4,
+      investigations_per_day: [{ date: '2026-11-07', count: 4 }],
+      category_distribution: { upi_fraud: 2 },
+      risk_distribution: { High: 1, Low: 3 },
+      provider_failure_counts: { virustotal: 1 },
+      provider_failure_statuses: { virustotal: { unavailable: 1 } },
+      agent_failure_counts: { url: 1 },
+      agent_failure_statuses: { url: { failed: 1 } },
+      average_processing_time_ms: 1350,
+      feedback_counts: { correct: 2 },
+    })
+    location.hash = '#/admin'
+
+    render(<App />)
+
+    await screen.findByRole('heading', { name: 'Admin analytics' })
+    expect(await screen.findByText('1,350 ms')).toBeTruthy()
+    expect(screen.getByText('Investigations per day')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Provider failures' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Admin analytics/ })).toBeTruthy()
+    expect(mockAdminAnalytics).toHaveBeenCalledOnce()
+  })
+
+  it('hides admin navigation and shows the server denial for a regular user', async () => {
+    mockMe.mockResolvedValue({ id: 'user-id', email: 'member@example.com', role: 'user' })
+    mockAdminAnalytics.mockRejectedValue(new Error('Administrator access required'))
+    location.hash = '#/admin'
+
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'Administrator access required' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Admin analytics/ })).toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain('Administrator access required')
   })
 })

@@ -21,9 +21,9 @@ Statuses: `done` means the artifact exists; `not verified` means it has not been
 | Evaluation harness | Pass | Loader requires text/label/category/source/author/split; exact and near-duplicate test/train leakage checks; 2,000 bootstrap 95% CIs; stratified 5-fold CV on train+validation; current data size 32; see `docs/testing/evaluation-report.md`. |
 | Screenshot OCR | Pass (local); Docker runtime not verified | JPEG/PNG magic-byte validation, 5 MB cap, OpenCV preprocessing, real Tesseract run, clear missing-engine error, redaction, and injection tests; six new backend cases pass. Docker image build was not run because Docker is unavailable. |
 | PDF report export | Pass (SQLite) | PDF is generated from the stored report snapshot; tests verify findings and provenance levels, unavailable providers, agent audit, recommendations, limitations, and local timestamps. Only owners/admins can download. Rendered output visually inspected. |
-| Admin analytics | planned | Separate branch remains pending. |
-| Backend, evaluation, URL scanner, OCR, PDF, and migration tests | Pass | 174 passed in 14.07s with project venv Python 3.12.0; see docs/testing/test-report.md. |
-| Frontend tests/build | Pass | 20 passed across 4 Vitest files; production build succeeded with existing >500 kB chunk warning. Includes screenshot selection and PDF download/local-time request. |
+| Admin analytics | Pass (SQLite) | All metrics come from stored records. Backend tests cover 403 access, seeded aggregate values, first-admin password hashing, and refusal to create a second first-admin. Vitest verifies the admin dashboard and regular-user denial. README documents `python -m app.cli create-admin`; no default password. |
+| Backend, evaluation, URL scanner, OCR, PDF, migration, and admin tests | Pass | 179 passed in 17.49s with project venv Python 3.12.0; see docs/testing/test-report.md. |
+| Frontend tests/build | Pass | 22 Vitest tests passed across 4 files; production build succeeded with existing >500 kB chunk warning (645.86 kB JS, 190.13 kB gzip). Includes admin dashboard states. |
 | Docker/PostgreSQL deployment | Partially verified | Fresh PostgreSQL 17 Compose database completed all five migrations and the backend stayed up. Existing-volume upgrade and full production deployment remain not verified. |
 | GitHub remote/push | blocked | repository URL not provided |
 | `feature/evaluation` | Pass | Commit `fa938c3` was merged into `develop` |
