@@ -26,7 +26,8 @@ export type Report = {
   id: string; category: string; risk_score: number; risk_level: string; score_is_probability: boolean
   model_confidence: string; evidence_strength: string; findings: Array<Record<string, unknown>>
   evidence: Array<Record<string, unknown>>; agents: Array<Record<string, unknown>>; urls: string[]
-  threat_intel_results: Array<Record<string, unknown>>; data_availability: Record<string, unknown>
+  threat_intel_results: Array<{ provider: string; status: string; is_malicious?: boolean | null; reason?: string | null; detail?: string | null }>;
+  url_scans: Array<{ origin?: string; status?: string; reason?: string; findings?: Array<Record<string, unknown>>; fetch?: { status?: string; reason?: string } }>; data_availability: Record<string, unknown>
   recommendations: string[]; explanation: string; limitations: string[]; created_at: string
   transaction_advisory?: { advisory_only: boolean; advisory: string; recipient_identity_check: string; claimed_recipient_provided: boolean; amount_provided: boolean; payment_initiated: boolean; risk_score: number; risk_level: string; recommendations: string[] } | null
 }
