@@ -14,6 +14,8 @@ from app.core.config import settings
 from app.detection.normalize import extract_urls, load_organization_domains, normalize_text, privacy_safe_url, redact_sensitive, redact_urls_in_text
 from app.detection.rules import classify_message
 from app.detection.scoring import evidence_strength, score_findings
+from app.detection.conversation import analyze_conversation, parse_conversation_text
+from app.detection.transaction import assess_pre_transaction
 from app.detection.url_checks import inspect_url
 from app.intel.providers import check_url_reputation
 from app.llm.provider import get_explanation_provider
@@ -39,6 +41,9 @@ class WorkflowState(TypedDict, total=False):
     score: int
     risk_level: str
     report: dict
+    conversation_messages: list[dict]
+    transaction_context: dict
+    transaction_advisory: dict
 
 
 def _run(agent_name: str, status: str, started: float, findings: list[dict] | None = None, tools: list[str] | None = None, error: str | None = None) -> dict:
@@ -318,17 +323,15 @@ def impersonation_agent(state: WorkflowState) -> dict:
 
 def conversation_agent(state: WorkflowState) -> dict:
     started = time.monotonic()
-    if state.get("input_type") != "conversation":
-        return {"runs": [_run("ConversationAnalysis", "skipped", started, [], [], "Input mode is not conversation.")]}
-    text = state.get("normalized_text", "").lower()
-    findings = []
-    payment_terms = sum(text.count(term) for term in ("pay", "transfer", "send money", "deposit"))
-    if payment_terms >= 3:
-        findings.append({"indicator":"repeated_payment_pressure", "detail":"The conversation repeatedly references payment or transfer requests.", "verification_level":"heuristic", "source":"conversation_pattern_rules", "score_weight":18})
-    if text.count("otp") >= 2 or text.count("pin") >= 2:
-        findings.append({"indicator":"repeated_credential_pressure", "detail":"Credential or OTP requests appear repeatedly in the conversation.", "verification_level":"heuristic", "source":"conversation_pattern_rules", "score_weight":24})
-    return {"findings": findings, "runs": [_run("ConversationAnalysis", "completed", started, findings, ["conversation_pattern_rules"])]}
-
+    input_type = state.get("input_type")
+    messages = state.get("conversation_messages") or []
+    if not messages and input_type == "conversation":
+        messages = parse_conversation_text(state.get("normalized_text", ""))
+    if not messages or input_type not in {"conversation", "transaction"}:
+        return {"runs": [_run("ConversationAnalysis", "skipped", started, [], [], "No conversation sequence was supplied.")]}
+    analysis = analyze_conversation(messages)
+    findings = analysis["findings"]
+    return {"findings": findings, "runs": [_run("ConversationAnalysis", "completed", started, findings, ["conversation_sequence_rules"])]}
 
 def reconcile(state: WorkflowState) -> dict:
     started = time.monotonic()
@@ -346,10 +349,35 @@ def reconcile(state: WorkflowState) -> dict:
 def risk_assessment(state: WorkflowState) -> dict:
     started = time.monotonic()
     findings = state.get("findings", [])
+    transaction_context = state.get("transaction_context")
+    transaction_advisory = None
+    transaction_findings: list[dict] = []
+    if transaction_context is not None:
+        transaction = assess_pre_transaction(**transaction_context)
+        transaction_findings = transaction["findings"]
+        findings = findings + transaction_findings
+        transaction_advisory = {
+            "advisory_only": True,
+            "advisory": transaction["advisory"],
+            "recipient_identity_check": transaction["recipient_identity_check"],
+            "claimed_recipient_provided": transaction["claimed_recipient_provided"],
+            "amount_provided": transaction["amount_provided"],
+            "payment_initiated": False,
+            "risk_score": transaction["risk_score"],
+            "risk_level": transaction["risk_level"],
+            "recommendations": transaction["recommendations"],
+        }
+        transaction_run = _run("PreTransactionRisk", "completed", started, transaction_findings, ["pre_transaction_rules"])
+    else:
+        transaction_run = _run("PreTransactionRisk", "skipped", started, [], [], "Input is not a pre-transaction request.")
     score, level, _ = score_findings(findings)
-    category = state.get("category", "other_suspicious")
-    return {"score": score, "risk_level": level, "runs": [_run("RiskAssessment", "completed", started, [], ["weighted_indicator_scorer"]) ]}
-
+    return {
+        "findings": transaction_findings,
+        "score": score,
+        "risk_level": level,
+        "transaction_advisory": transaction_advisory,
+        "runs": [transaction_run, _run("RiskAssessment", "completed", started, [], ["weighted_indicator_scorer"])],
+    }
 
 def recommend(state: WorkflowState) -> dict:
     started = time.monotonic()
@@ -408,6 +436,7 @@ def finalize(state: WorkflowState) -> dict:
         "url_scans": state.get("url_scan_results", []),
         "redactions": state.get("redactions", []),
         "recommendations": state.get("recommendation", []),
+        "transaction_advisory": state.get("transaction_advisory"),
         "explanation": state.get("explanation", ""),
         "limitations": ["No known threat found does not mean a URL is safe.", "The weighted risk score is not a calibrated probability.", "URL paths and query strings are omitted before storage and threat-intel lookup."],
     }
@@ -444,6 +473,6 @@ def build_workflow():
 _WORKFLOW = build_workflow()
 
 
-def investigate(text: str, input_type: str) -> dict:
-    result = _WORKFLOW.invoke({"input_text": text, "input_type": input_type, "findings": [], "runs": [], "intel_results": []})
+def investigate(text: str, input_type: str, *, conversation_messages: list[dict] | None = None, transaction_context: dict | None = None) -> dict:
+    result = _WORKFLOW.invoke({"input_text": text, "input_type": input_type, "conversation_messages": conversation_messages or [], "transaction_context": transaction_context, "findings": [], "runs": [], "intel_results": []})
     return result["report"]

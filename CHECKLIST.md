@@ -26,3 +26,4 @@ Statuses: `done` means the artifact exists; `not verified` means it has not been
 | GitHub remote/push | blocked | repository URL not provided |
 | `feature/evaluation` | Pass | Commit `fa938c3` was merged into `develop` |
 | `feature/url-scanner` | Pass | Merge commit `1e282e4` is present on `develop`; the Step 0 worktree was clean |
+| `feature/transaction-conversation` | Pass | Focused transaction/conversation suite: 62 passed (15 scam + 15 legitimate transaction examples; 15 scam + 17 legitimate conversation examples). Full backend suite: 148 passed in 10.16s using `.venv` Python 3.12. Frontend suite: 1 passed; production build succeeded. Includes genuine bill reminder false-positive checks. |

@@ -130,12 +130,30 @@ function ScannerPage({ navigate }: { navigate: (page: Page, id?: string) => void
   const [error, setError] = useState('')
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    const payloadText = mode === 'payment_request'
-      ? [`Description: ${transaction.description}`, `Claimed recipient: ${transaction.recipient}`, `Reason: ${transaction.reason}`, `Amount: ${transaction.amount ? `INR ${transaction.amount}` : 'not provided'}`, `Related conversation: ${transaction.relatedChat}`].filter(line => !line.endsWith(': ')).join('\n')
-      : text
-    if (!payloadText.trim()) return
+    if (mode !== 'payment_request' && !text.trim()) return
+    if (mode === 'payment_request' && !transaction.description.trim()) return
     setBusy(true); setError('')
-    try { const result = await api.scan(payloadText, mode); navigate('report', result.id) }
+    try {
+      let result
+      if (mode === 'payment_request') {
+        result = await api.transaction({
+          description: transaction.description,
+          claimed_recipient: transaction.recipient,
+          reason: transaction.reason,
+          amount: transaction.amount ? Number(transaction.amount) : undefined,
+          related_chat: transaction.relatedChat,
+        })
+      } else if (mode === 'conversation') {
+        const messages = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+          const match = line.match(/^([^:]{1,80}):\s*(.+)$/)
+          return match ? { sender: match[1].trim(), text: match[2].trim() } : { sender: 'participant', text: line }
+        })
+        result = await api.conversation(messages)
+      } else {
+        result = await api.scan(text, mode)
+      }
+      navigate('report', result.id)
+    }
     catch (caught) { setError(caught instanceof Error ? caught.message : 'Investigation could not be completed.') }
     finally { setBusy(false) }
   }
@@ -181,6 +199,7 @@ function ReportPage({ id, navigate }: { id: string; navigate: (page: Page, id?: 
     <div className="report-grid"><section className="panel score-panel"><span className="eyebrow">DETERMINISTIC RISK SCORE</span><div className="score-display"><strong>{report.risk_score}</strong><span>/ 100</span></div><RiskBadge level={report.risk_level} /><p>This score is not a probability. Model confidence: <strong>{report.model_confidence.replaceAll('_', ' ')}</strong>.</p><div className="score-meta"><div><span>Evidence strength</span><strong>{report.evidence_strength}</strong></div><div><span>Category</span><strong className="capitalize">{report.category.replaceAll('_', ' ')}</strong></div></div></section>
       <section className="panel findings-panel"><div className="section-head"><div><h2>Indicators found</h2><p>Each finding shows its verification level.</p></div></div>{report.findings.length ? <div className="finding-list">{report.findings.map((item, index) => <div className="finding-row" key={`${String(item.indicator)}-${index}`}><div className="finding-icon"><TriangleAlert size={16} /></div><div><strong>{String(item.detail)}</strong><span>{String(item.source)} · {String(item.verification_level)}</span></div></div>)}</div> : <EmptyState title="No indicators detected" body="No known threat does not mean the content is safe. Verify independently." />}</section>
     </div>
+    {report.transaction_advisory && <section className="panel transaction-advisory"><div className="section-head"><div><h2>Pre-transaction advisory</h2><p>Advisory only · recipient identity not verified · no payment initiated.</p></div></div><p>{report.transaction_advisory.advisory}</p><ul>{report.transaction_advisory.recommendations.map(item => <li key={item}>{item}</li>)}</ul></section>}
     {report.explanation && <section className="panel explanation-panel"><Sparkles size={18} /><div><h2>AI explanation <span className="verification-tag llm">LLM inferred</span></h2><p>{report.explanation}</p><small>This model explanation is an opinion, not verified evidence.</small></div></section>}
     <div className="report-grid lower-grid"><section className="panel"><div className="section-head"><div><h2>Recommended next steps</h2><p>Advisory guidance for you to verify independently.</p></div></div><ol className="recommendation-list">{report.recommendations.map((item, index) => <li key={index}><span>{index + 1}</span>{item}</li>)}</ol></section><section className="panel"><div className="section-head"><div><h2>Investigation audit</h2><p>Status per stage and tool.</p></div></div><div className="agent-list">{report.agents.map((agent, index) => <div className="agent-row" key={`${String(agent.agent_name)}-${index}`}><div className={`agent-status ${agent.status === 'completed' ? 'done' : ''}`}>{agent.status === 'completed' ? <CheckCircle2 size={15} /> : <CircleAlert size={15} />}</div><span>{String(agent.agent_name)}</span><span className={`status-label ${String(agent.status)}`}>{String(agent.status).replaceAll('_', ' ')}</span></div>)}</div></section></div>
     <section className="panel availability-panel"><div><h2>Data availability</h2><p>Provider statuses are reported; no sample reputation data is substituted.</p></div><pre>{JSON.stringify(report.data_availability, null, 2)}</pre></section>
