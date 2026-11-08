@@ -31,10 +31,13 @@ do not establish whether a sender, payment request, or courier notice is real.
 
 KYC checks also report account-verification, restriction/suspension,
 verification-link, bank/government-claim, urgency, and unverified-domain
-signals. KYC + an account restriction threat + a verification link scores at
-least Moderate. An unverified domain paired with a bank/government claim adds
-8 points. Domains outside the small trusted-domain list are described as
-unverified, not as malicious or proven unsafe.
+signals. KYC + an active account restriction or suspension threat qualifies at
+Moderate without requiring a link. A bank/government claim + an active
+restriction threat + urgency also qualifies without a link. These combinations
+share one `signal_combination:fake_kyc` indicator, so matching both does not
+double-count the combination weight. An unverified domain paired with a
+bank/government claim adds 8 points. Domains outside the small trusted-domain
+list are described as unverified, not as malicious or proven unsafe.
 
 Single-signal high-risk families cover direct requests for sensitive identity
 or financial details, remote-access app installation, wallet/UPI payments to

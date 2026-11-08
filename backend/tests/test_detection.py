@@ -174,6 +174,39 @@ def test_kyc_restriction_and_link_alone_reach_moderate():
     assert level == "Moderate"
 
 
+KYC_NO_LINK_MESSAGE = (
+    "Your bank KYC is incomplete and your account will be restricted today. "
+    "Verify immediately to avoid suspension."
+)
+
+
+def test_kyc_restriction_threat_without_link_reaches_moderate():
+    result = classify_message(KYC_NO_LINK_MESSAGE)
+    score, level, scored_findings = score_findings(result["findings"])
+    weights = {finding["indicator"]: finding["score_weight"] for finding in scored_findings}
+
+    assert result["category"] == "fake_kyc"
+    assert {"kyc_verification", "account_restriction"} <= set(result["matched_signals"])
+    assert weights["signal_combination:fake_kyc"] >= 30
+    assert score >= 25
+    assert level in {"Moderate", "High"}
+
+
+def test_government_identity_restriction_and_urgency_qualify_without_link():
+    result = classify_message(
+        "Government identity review: your account will be suspended today. "
+        "Complete the identity check immediately."
+    )
+    score, level, scored_findings = score_findings(result["findings"])
+    weights = {finding["indicator"]: finding["score_weight"] for finding in scored_findings}
+
+    assert result["category"] == "fake_kyc"
+    assert {"bank_government_claim", "account_restriction", "urgency"} <= set(result["matched_signals"])
+    assert weights["signal_combination:fake_kyc"] >= 30
+    assert score >= 25
+    assert level in {"Moderate", "High"}
+
+
 def test_unverified_domain_and_urgency_combo_has_a_thirty_point_floor():
     result = classify_message("Urgent: check abcd.com today for your delivery update.")
     score, level, scored_findings = score_findings(result["findings"])
@@ -204,6 +237,26 @@ KYC_LEGITIMATE_LOOKALIKES = [
     pytest.param(
         "Annual identity review reminder: bring your documents to a branch if needed. We will not send a web link or restrict account access.",
         id="annual-identity-review-in-branch",
+    ),
+    pytest.param(
+        "Bank KYC reminder: visit your branch or use the official app to update your details by 30 June. Your account remains active and unrestricted.",
+        id="no-link-bank-kyc-reminder-no-threat",
+    ),
+    pytest.param(
+        "Your monthly bank statement is ready in the official mobile app. No verification is needed and your account access is unchanged.",
+        id="no-link-statement-ready",
+    ),
+    pytest.param(
+        "Your password change was successful today. If you did not make this change, contact the bank using the number on your card.",
+        id="no-link-password-change-confirmation",
+    ),
+    pytest.param(
+        "Your KYC documents were received. Review the status in the official bank app; no action is required and all services remain active.",
+        id="no-link-kyc-received-services-active",
+    ),
+    pytest.param(
+        "Bank profile review is due this quarter. Visit a branch or use the official app at your convenience; services continue normally.",
+        id="no-link-bank-profile-review-normal-service",
     ),
 ]
 
