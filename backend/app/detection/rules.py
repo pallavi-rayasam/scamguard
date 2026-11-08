@@ -20,11 +20,11 @@ INDICATOR_WEIGHTS = {
 
 INDICATOR_PHRASES = {
     "credential_request": ["share your password", "send your password", "share your pin", "tell me your pin", "enter your upi pin"],
-    "otp_request": ["share the otp", "tell me the otp", "send otp", "share otp", "verification code"],
-    "financial_action": ["transfer the amount", "pay now", "send money", "scan this qr", "collect request", "pay registration fee"],
+    "otp_request": ["share the otp", "tell me the otp", "send otp", "share otp", "verification code", "read out every otp", "read out the otp"],
+    "financial_action": ["transfer the amount", "pay now", "send money", "scan this qr", "collect request", "pay registration fee", "deposit to unlock"],
     "urgent_threat": ["immediately", "within 10 minutes", "account will be blocked", "will be disconnected", "digital arrest", "arrest warrant"],
     "reward_bait": ["you have won", "claim your prize", "guaranteed returns", "double your money", "free gift"],
-    "remote_access": ["screen sharing", "install anydesk", "install remote support", "share your screen"],
+    "remote_access": ["screen sharing", "install anydesk", "install remote support", "share your screen", "share the screen", "give remote access"],
     "unusual_payment": ["gift card", "crypto wallet", "personal upi", "pay outside the app"],
     "sensitive_data_request": ["aadhaar number", "pan number", "card number", "bank details", "date of birth"],
 }
@@ -65,6 +65,17 @@ FAMILY_NAMES = {
     "guaranteed_return_claim": "guaranteed or unusually high investment return claim",
     "upfront_benefit_fee": "upfront or refundable fee/deposit tied to a job, loan, or prize",
     "online_relationship_money_request": "urgent money request from someone met online",
+    "courier_otp_request": "request to send a delivery OTP by message",
+    "upi_reactivation_transfer": "UPI reactivation request requiring a transfer",
+    "account_security_alert": "unusual or suspicious account sign-in alert",
+    "account_signin_link": "sign-in action requested through a link",
+    "job_upfront_payment": "upfront payment required to unlock a job or task",
+    "tech_support_claim": "technical-support or device-infection claim",
+    "unsafe_app_install": "APK installation paired with disabling device protection",
+    "remote_support_request": "request for remote access, screen sharing, or OTP disclosure",
+    "safe_account_transfer": "request to transfer funds to a supposed safe account",
+    "manager_impersonation": "claim to be the recipient's manager or supervisor",
+    "gift_card_redemption_request": "request to buy gift cards and send redemption codes",
 }
 
 # These are explicitly contextual combinations. Context words alone never add
@@ -73,8 +84,8 @@ SIGNAL_PATTERNS = {
     "authority_customs": re.compile(r"\b(?:customs?|police|law enforcement|border authorities|authorit(?:y|ies))\b", re.I),
     "parcel_courier": re.compile(r"\b(?:parcel|courier|shipment|package|delivery)\b", re.I),
     "prohibited_illegal": re.compile(r"\b(?:prohibited|illegal|banned|contraband)\b|\brestricted\s+(?:item|goods|package|substance)\b", re.I),
-    "prize_won": re.compile(r"\b(?:prize|won|winnings?|jackpot|reward)\b", re.I),
-    "claim_collect": re.compile(r"\b(?:claim|collect(?:ion|ed|ing)?|release)\b", re.I),
+    "prize_won": re.compile(r"\b(?:prize|won|winnings?|jackpot|reward|grant)\b", re.I),
+    "claim_collect": re.compile(r"\b(?:claim|collect(?:ion|ed|ing)?|release|receive(?:d|s)?)\b", re.I),
     "pay_penalty_fee": re.compile(r"\b(?:pay(?:ment|able)?|fees?|penalt(?:y|ies)|clearance|charges?)\b", re.I),
     "call_now": re.compile(r"\b(?:call|phone)\s+(?:(?:\+?\d[\d -]{5,15}|(?:me|us|the number|this number|our helpline))\s+)?(?:now|immediately|right away)\b|\b(?:call|phone)\s+now\b", re.I),
     "urgency": re.compile(r"\b(?:urgent(?:ly)?|immediately|right now|today|do not delay|don't delay|final (?:notice|warning|attempt)|(?:second|2nd|third|3rd) attempt|\d+(?:st|nd|rd|th) attempt|within \d+ (?:minutes?|hours?|days?))\b", re.I),
@@ -88,7 +99,7 @@ SIGNAL_PATTERNS = {
     "criminal_case_claim": re.compile(r"\b(?:criminal case|criminal complaint|under investigation|identity.{0,25}linked to.{0,30}(?:case|crime)|linked to.{0,20}(?:criminal case|crime))\b", re.I),
     "warrant_threat": re.compile(r"\b(?:warrant(?: will be issued| has been issued)?|issue an arrest warrant|arrest warrant)\b", re.I),
     "stay_on_call": re.compile(r"\b(?:stay|remain|keep|continue)\s+(?:on|in)\s+(?:this\s+)?(?:call|line)\b|\bdo not hang up\b", re.I),
-    "job_offer": re.compile(r"\b(?:job offer|work[- ]from[- ]home|position|shortlisted|vacancy|employment|recruit(?:ing|ment)?|part[- ]time|product reviewers?|tasks?)\b", re.I),
+    "job_offer": re.compile(r"\b(?:job offer|job|work[- ]from[- ]home|position|shortlisted|vacancy|employment|recruit(?:ing|ment)?|part[- ]time|product reviewers?|tasks?)\b", re.I),
     "salary_offer": re.compile(r"\b(?:salary|per month|monthly pay|monthly salary|remuneration)\b|\bearn(?:ing)?\b.{0,50}\b(?:per day|daily|per month|monthly)\b", re.I),
     "upfront_job_fee": re.compile(r"\b(?:registration|application|training|security)\s+(?:fee|charge|deposit)\b|\brefundable\b.{0,35}\b(?:fee|charge|deposit)\b|\b(?:upfront|advance)\s+(?:fee|charge|deposit)\b", re.I),
     "utility_service": re.compile(r"\b(?:electricity|power|water|gas|utility)\b", re.I),
@@ -104,6 +115,17 @@ SIGNAL_PATTERNS = {
     "guaranteed_return_claim": re.compile(r"\bguaranteed\b.{0,60}\b(?:returns?|profit|yield)\b|\bguaranteed\b.{0,35}\b\d{1,3}(?:\.\d+)?\s*%\s*(?:daily|per day|weekly|monthly|returns?|profit|yield)\b|\b(?:1[5-9]|[2-9]\d|100)(?:\.\d+)?\s*%\s*(?:daily|per day|weekly|monthly)\b", re.I),
     "upfront_benefit_fee": re.compile(r"\b(?:job|work|position|employment|recruit(?:ing|ment)?|reviewers?|tasks?|loan|prize|winnings?|offer|membership)\b.{0,150}\b(?:refundable|upfront|registration|onboarding|application|processing|training|release|security)\b.{0,60}\b(?:fees?|deposit|charge)\b|\b(?:refundable|upfront|registration|onboarding|application|processing|training|release|security)\b.{0,60}\b(?:fees?|deposit|charge)\b.{0,150}\b(?:job|work|position|employment|recruit(?:ing|ment)?|reviewers?|tasks?|loan|prize|winnings?|offer|membership)\b", re.I),
     "online_relationship_money_request": re.compile(r"(?=.*\b(?:met online|met on (?:a )?(?:dating app|dating site)|online friend|dating app)\b)(?=.*\b(?:urgent(?:ly)?|emergency|hospital|medical|today|right now|immediately)\b)(?=.*\b(?:send|transfer|borrow|lend|need|money|cash|amount|deposit)\b).+", re.I),
+    "courier_otp_request": re.compile(r"\b(?:send|text|reply with)\b.{0,35}\b(?:the\s+)?(?:otp|verification code)\b.{0,55}\b(?:you just received|for delivery|to complete delivery)\b|\byou just received\b.{0,35}\b(?:otp|verification code)\b.{0,35}\b(?:send|text|reply)\b", re.I),
+    "upi_reactivation_transfer": re.compile(r"(?=.*\bupi\b)(?=.*\b(?:inactive|reactivat(?:e|ion)|activation|blocked)\b)(?=.*\b(?:transfer|send|deposit|pay)\b).+", re.I),
+    "account_security_alert": re.compile(r"\b(?:unusual|suspicious|unauthori[sz]ed|new)\s+(?:account\s+)?(?:login|log-in|sign[ -]?in)\b|\bnew device sign[ -]?in\b", re.I),
+    "account_signin_link": re.compile(r"\b(?:sign\s+in|log\s+in|secure your account|verify your login)\b.{0,70}\b(?:link|url|https?://|www\.)", re.I),
+    "job_upfront_payment": re.compile(r"(?=.*\b(?:job|work|task|commission|data[- ]entry|employment)\b)(?=.*\b(?:deposit|pay|purchase|buy|transfer)\b)(?=.*\b(?:unlock|task|id card|training kit|registration|training)\b).+", re.I),
+    "tech_support_claim": re.compile(r"\b(?:technical support|tech support|technician|your phone is infected|phone infected|virus detected|bank app has a security issue|malware alert)\b", re.I),
+    "unsafe_app_install": re.compile(r"\binstall\b.{0,70}\b(?:apk|application package)\b.{0,70}\b(?:disable|turn off|ignore)\b.{0,35}\b(?:play protect|security|protection)\b|\b(?:disable|turn off)\b.{0,35}\b(?:play protect|security protection)\b", re.I),
+    "remote_support_request": re.compile(r"\b(?:share the screen|share your screen|screen sharing|give remote access|read out every otp|read out the otp)\b", re.I),
+    "safe_account_transfer": re.compile(r"\b(?:transfer|send|move)\b.{0,60}\b(?:balance|money|funds?)\b.{0,60}\b(?:safe account|verification account|secure account)\b|\b(?:safe account|verification account|secure account)\b.{0,60}\b(?:transfer|send|move)\b", re.I),
+    "manager_impersonation": re.compile(r"\b(?:this is your manager|i am your manager|your boss|your supervisor)\b", re.I),
+    "gift_card_redemption_request": re.compile(r"\b(?:buy|purchase|get)\b.{0,50}\bgift cards?\b.{0,80}\b(?:send|share|provide)\b.{0,50}\b(?:redemption|gift card) codes?\b|\bgift cards?\b.{0,80}\b(?:redemption codes?)\b", re.I),
 }
 
 _PAYMENT_NOT_REQUESTED = re.compile(
@@ -120,11 +142,11 @@ _NEGATED_SERVICE_THREAT = re.compile(
     re.I,
 )
 _NEGATED_REQUEST = re.compile(
-    r"\b(?:do not|don't|never|avoid|will never|will not)\b.{0,90}\b(?:ask|send|transfer|deposit|pay|install|share|provide|enter|upload|type|email|text|reply)\b",
+    r"\b(?:do not|don't|never|avoid|will never|will not)\b.{0,90}\b(?:ask|send|transfer|deposit|pay|install|share|provide|enter|upload|type|email|text|reply|read\s+out)\b",
     re.I,
 )
 _NEGATED_SENSITIVE_REQUEST = re.compile(
-    r"\b(?:do not|don't|never|will never|will not)\b.{0,90}\b(?:ask|send|share|provide|enter|upload|type|email|text|reply|disclose|reveal)\b",
+    r"\b(?:do not|don't|never|will never|will not)\b.{0,90}\b(?:ask|send|share|provide|enter|upload|type|email|text|reply|disclose|reveal|read\s+out)\b",
     re.I,
 )
 _NEGATED_RETURN_CLAIM = re.compile(
@@ -132,7 +154,7 @@ _NEGATED_RETURN_CLAIM = re.compile(
     re.I,
 )
 _OTP_ADVICE_BEFORE = re.compile(
-    r"\b(?:do not|don't|never|not)\s+(?:ever\s+)?(?:ask|share|send|tell|provide|disclose|give|reveal)\b"
+    r"\b(?:do not|don't|never|not)\s+(?:ever\s+)?(?:ask|share|send|tell|provide|disclose|give|reveal|read\s+out)\b"
     r"(?:\W+\w+){0,5}\W*$|\bnever ask.{0,30}\b(?:share|send|tell|provide|disclose|give|reveal)\b(?:\W+\w+){0,2}\W*$",
     re.I,
 )
@@ -215,6 +237,8 @@ def classify_message(text: str) -> dict:
             for match in re.finditer(re.escape(phrase), lowered):
                 if key == "otp_request" and _advisory_negated(lowered, match.start(), match.end()):
                     continue
+                if key == "financial_action" and phrase == "collect request" and re.search(r"\bcollect request\b.{0,50}\b(?:declined|failed|rejected|cancelled)\b", lowered) and re.search(r"\bno money (?:was )?debited\b", lowered):
+                    continue
                 context = lowered[max(0, match.start() - 90):min(len(lowered), match.end() + 90)]
                 if key in {"credential_request", "sensitive_data_request"} and _NEGATED_SENSITIVE_REQUEST.search(context):
                     continue
@@ -240,9 +264,9 @@ def classify_message(text: str) -> dict:
         name: _active_matches(
             lowered,
             pattern,
-            payment=name in {"pay_penalty_fee", "upfront_job_fee", "upfront_benefit_fee"},
+            payment=name in {"pay_penalty_fee", "upfront_job_fee", "upfront_benefit_fee", "job_upfront_payment"},
             service_threat=name in {"account_restriction", "utility_disconnection"},
-            request=name in {"remote_support_app_install", "wallet_payment_to_unlock", "upi_payment_to_receive", "online_relationship_money_request"},
+            request=name in {"remote_support_app_install", "wallet_payment_to_unlock", "upi_payment_to_receive", "online_relationship_money_request", "courier_otp_request", "account_signin_link", "unsafe_app_install", "remote_support_request", "safe_account_transfer", "gift_card_redemption_request"},
             sensitive_request=name == "credential_data_request",
             return_claim=name == "guaranteed_return_claim",
         )
@@ -279,6 +303,10 @@ def classify_message(text: str) -> dict:
         "guaranteed_return_claim": {"reward_bait"},
         "upfront_benefit_fee": {"financial_action"},
         "online_relationship_money_request": {"financial_action"},
+        "remote_support_request": {"remote_access", "otp_request"},
+        "courier_otp_request": {"otp_request"},
+        "safe_account_transfer": {"financial_action"},
+        "gift_card_redemption_request": {"unusual_payment"},
     }
     suppressed_indicators = {indicator for family in active_signals for indicator in duplicate_indicators.get(family, set())}
     matched_indicators = [item for item in matched_indicators if item["indicator"] not in suppressed_indicators]
@@ -299,6 +327,8 @@ def classify_message(text: str) -> dict:
     for category in CATEGORIES:
         for phrase in category.get("patterns", []):
             matches = list(re.finditer(re.escape(phrase.lower()), lowered))
+            if category["code"] == "upi_fraud" and phrase.lower() == "collect request" and re.search(r"\bcollect request\b.{0,50}\b(?:declined|failed|rejected|cancelled)\b", lowered) and re.search(r"\bno money (?:was )?debited\b", lowered):
+                matches = []
             if category["code"] == "otp_theft":
                 matches = [match for match in matches if not _advisory_negated(lowered, match.start(), match.end())]
             if matches:
@@ -310,6 +340,8 @@ def classify_message(text: str) -> dict:
         combos = ([category_config["signal_combination"]] if category_config.get("signal_combination") else [])
         combos.extend(category_config.get("additional_signal_combinations", []))
         for combo in combos:
+            if category_code == "digital_arrest" and "parcel_courier" in active_signals:
+                continue
             combo_strong = set(combo.get("strong", []))
             combo_actions = set(combo.get("action_required", []))
             if combo["context"] not in active_signals:
@@ -364,5 +396,10 @@ def classify_message(text: str) -> dict:
             "score_weight": 8 if seeded_count else 0,
         })
 
-    category = category_hits.most_common(1)[0][0] if category_hits else None
+    if "parcel_courier" in active_signals and "courier_scam" in category_hits:
+        # A courier message that threatens arrest remains a courier scam; do not
+        # let the generic digital-arrest category steal the more specific context.
+        category = "courier_scam"
+    else:
+        category = category_hits.most_common(1)[0][0] if category_hits else None
     return {"category": category, "findings": findings, "matched_signals": sorted(active_signals)}

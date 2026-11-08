@@ -83,6 +83,78 @@ SCAM_REGRESSIONS = [
         "courier_scam",
         {"parcel_courier", "pay_penalty_fee", "urgency", "off_platform_link", "unverified_domain"},
     ),
+    (
+        "upi-reactivation-transfer",
+        "Your UPI account is inactive. Transfer Rs. 1 to this ID now to reactivate it.",
+        "upi_fraud",
+        {"upi_reactivation_transfer"},
+    ),
+    (
+        "suspicious-login-external-link",
+        "Unusual login detected. Sign in at http://example.invalid/claim103 to secure your account.",
+        "phishing",
+        {"account_security_alert", "account_signin_link", "off_platform_link", "unverified_domain"},
+    ),
+    (
+        "task-deposit-scam",
+        "Like videos for commission. Deposit Rs. 12,000 to unlock the next high-paying task.",
+        "job_fraud",
+        {"job_offer", "job_upfront_payment"},
+    ),
+    (
+        "mandatory-job-kit-fee",
+        "Government data-entry job confirmed. Pay for the mandatory ID card and training kit through this personal UPI ID.",
+        "job_fraud",
+        {"job_offer", "job_upfront_payment", "pay_penalty_fee"},
+    ),
+    (
+        "grant-verification-fee",
+        "You are selected for an international grant. Pay verification charges to receive the funds.",
+        "lottery_fraud",
+        {"prize_won", "claim_collect", "pay_penalty_fee"},
+    ),
+    (
+        "fake-tech-support-apk",
+        "Your phone is infected. Install this APK from http://example.invalid/claim101 and disable Play Protect.",
+        "fake_customer_support",
+        {"tech_support_claim", "unsafe_app_install", "off_platform_link", "unverified_domain"},
+    ),
+    (
+        "fake-tech-support-otp",
+        "We are from technical support. Share the screen and read out every OTP so we can remove the virus.",
+        "fake_customer_support",
+        {"tech_support_claim", "remote_support_request"},
+    ),
+    (
+        "remote-access-tech-support",
+        "Your bank app has a security issue. Give remote access to our technician immediately.",
+        "fake_customer_support",
+        {"tech_support_claim", "remote_support_request"},
+    ),
+    (
+        "courier-otp-request",
+        "Courier agent here. Send the OTP you just received so I can complete delivery.",
+        "courier_scam",
+        {"parcel_courier", "courier_otp_request"},
+    ),
+    (
+        "cyber-cell-safe-account-transfer",
+        "I am calling from the cyber cell. Your account is linked to a crime. Transfer your balance to this safe account for verification.",
+        "digital_arrest",
+        {"authority_investigation", "criminal_case_claim", "safe_account_transfer"},
+    ),
+    (
+        "manager-gift-card-impersonation",
+        "This is your manager. Buy gift cards urgently and send me the redemption codes. Do not call me.",
+        "identity_impersonation",
+        {"manager_impersonation", "gift_card_redemption_request", "urgency"},
+    ),
+    (
+        "police-case-settlement-threat",
+        "Police case registered against your Aadhaar. Pay the settlement amount now or you will be arrested.",
+        "digital_arrest",
+        {"authority_investigation", "coercive_threat", "pay_penalty_fee"},
+    ),
 ]
 
 
@@ -138,6 +210,15 @@ LEGITIMATE_LOOKALIKES = [
     pytest.param("Your verification code is 482913. Do not share this code with anyone, including bank staff.", id="legit-otp-do-not-share-after"),
     pytest.param("Do not share the OTP with anyone. Your bank will never ask you to send it by phone or message.", id="legit-otp-do-not-share-before"),
     pytest.param("Your mobile bill payment is due next week; view the statement in the provider app. No action is needed today.", id="legit-mobile-bill-reminder"),
+    pytest.param("Your UPI collect request for Rs. 3,499 was declined. No money was debited.", id="legit-upi-collect-declined-no-debit"),
+    pytest.param("New sign-in to your account detected. If this was you, open the official app directly; we will never send a sign-in link.", id="legit-login-alert-no-link"),
+    pytest.param("Your data-entry job application has been received. The ID card and training kit are provided free of charge; no deposit is needed.", id="legit-job-notice-no-fee"),
+    pytest.param("Your scholarship grant application was approved. Funds will be credited to the bank account already on file; no verification fee is required.", id="legit-grant-no-fee"),
+    pytest.param("Technical support reminder: do not install APK files or disable Play Protect. Use the official app store for updates.", id="legit-tech-support-security-advice"),
+    pytest.param("Your delivery OTP is 482913. Share it only with the courier agent in person at your doorstep.", id="legit-courier-otp-at-door"),
+    pytest.param("The police registered a case. Never transfer money to a safe account; contact your bank using its official number.", id="legit-safe-account-warning"),
+    pytest.param("Your manager scheduled a team meeting. Do not buy gift cards or send redemption codes.", id="legit-manager-notice"),
+    pytest.param("Never read out the OTP to a technician, even if they claim to be technical support.", id="legit-otp-safety-advice"),
 ]
 
 

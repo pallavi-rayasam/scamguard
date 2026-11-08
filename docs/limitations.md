@@ -11,3 +11,10 @@
 - The history UI can list and reopen reports. Search/filter and single-report delete UI are not complete, although the API supports query filters and delete.
 - The dashboard chart and icon imports create one larger production JavaScript bundle; Vite warns at 500 kB.
 - Local rate limiting is in-process only. A deployed service needs gateway limits, secure cookie settings, TLS, secrets management, and operational review.
+
+
+## Additional validation findings — 8 November 2026
+
+A 320-row synthetic stress corpus initially exposed five false positives and 60 false negatives (79.69% accuracy) in the standalone deterministic text-rule engine. Targeted rule changes then passed all 320 rows. This is a regression-corpus pass, not an independent benchmark: the corpus guided the fixes and contains repeated templates (116 similarity clusters). The test did not exercise LangGraph, URL scanning, reputation providers, OCR, or the LLM. Detailed before/after results are in `docs/testing/synthetic-stress-test-2026-11-08.md`.
+
+The separate 300-row sourced candidate corpus has substantial near-duplicate repetition and one generic-spam source label. It remains a raw candidate corpus pending human adjudication; it is not part of the approved 32-row evaluation dataset. See `docs/testing/dataset-audit-2026-11-08.md`.

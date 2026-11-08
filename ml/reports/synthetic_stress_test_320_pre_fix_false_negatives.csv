@@ -1,0 +1,61 @@
+message_id,actual,predicted,score,risk_level,expected_category,detected_category,message,signals
+MSG0184,scam,legitimate,0,Low,upi_collect_scam,,Your UPI account is inactive. Transfer Rs. 1 to this ID now to reactivate it.,
+MSG0188,scam,legitimate,0,Low,upi_collect_scam,,Your UPI account is inactive. Transfer Rs. 1 to this ID now to reactivate it.,
+MSG0192,scam,legitimate,0,Low,upi_collect_scam,,Your UPI account is inactive. Transfer Rs. 1 to this ID now to reactivate it.,
+MSG0196,scam,legitimate,0,Low,upi_collect_scam,,Your UPI account is inactive. Transfer Rs. 1 to this ID now to reactivate it.,
+MSG0200,scam,legitimate,0,Low,upi_collect_scam,,Your UPI account is inactive. Transfer Rs. 1 to this ID now to reactivate it.,
+MSG0203,scam,legitimate,0,Low,phishing_link,,Unusual login detected. Sign in at http://example.invalid/claim103 to secure your account.,signal:off_platform_link;signal:unverified_domain
+MSG0207,scam,legitimate,0,Low,phishing_link,,Unusual login detected. Sign in at http://example.invalid/claim107 to secure your account.,signal:off_platform_link;signal:unverified_domain
+MSG0211,scam,legitimate,0,Low,phishing_link,,Unusual login detected. Sign in at http://example.invalid/claim111 to secure your account.,signal:off_platform_link;signal:unverified_domain
+MSG0215,scam,legitimate,0,Low,phishing_link,,Unusual login detected. Sign in at http://example.invalid/claim115 to secure your account.,signal:off_platform_link;signal:unverified_domain
+MSG0219,scam,legitimate,0,Low,phishing_link,,Unusual login detected. Sign in at http://example.invalid/claim119 to secure your account.,signal:off_platform_link;signal:unverified_domain
+MSG0223,scam,legitimate,0,Low,job_scam,,"Like videos for commission. Deposit Rs. 12,000 to unlock the next high-paying task.",signal:job_offer
+MSG0224,scam,legitimate,24,Low,job_scam,,Government data-entry job confirmed. Pay for the mandatory ID card and training kit through this personal UPI ID.,signal:bank_government_claim;signal:pay_penalty_fee;unusual_payment
+MSG0227,scam,legitimate,0,Low,job_scam,,"Like videos for commission. Deposit Rs. 3,499 to unlock the next high-paying task.",signal:job_offer
+MSG0228,scam,legitimate,24,Low,job_scam,,Government data-entry job confirmed. Pay for the mandatory ID card and training kit through this personal UPI ID.,signal:bank_government_claim;signal:pay_penalty_fee;unusual_payment
+MSG0231,scam,legitimate,0,Low,job_scam,,Like videos for commission. Deposit Rs. 245 to unlock the next high-paying task.,signal:job_offer
+MSG0232,scam,legitimate,24,Low,job_scam,,Government data-entry job confirmed. Pay for the mandatory ID card and training kit through this personal UPI ID.,signal:bank_government_claim;signal:pay_penalty_fee;unusual_payment
+MSG0235,scam,legitimate,0,Low,job_scam,,Like videos for commission. Deposit Rs. 780 to unlock the next high-paying task.,signal:job_offer
+MSG0236,scam,legitimate,24,Low,job_scam,,Government data-entry job confirmed. Pay for the mandatory ID card and training kit through this personal UPI ID.,signal:bank_government_claim;signal:pay_penalty_fee;unusual_payment
+MSG0239,scam,legitimate,0,Low,job_scam,,"Like videos for commission. Deposit Rs. 1,250 to unlock the next high-paying task.",signal:job_offer
+MSG0240,scam,legitimate,24,Low,job_scam,,Government data-entry job confirmed. Pay for the mandatory ID card and training kit through this personal UPI ID.,signal:bank_government_claim;signal:pay_penalty_fee;unusual_payment
+MSG0244,scam,legitimate,0,Low,lottery_prize,,You are selected for an international grant. Pay verification charges to receive the funds.,signal:pay_penalty_fee
+MSG0248,scam,legitimate,0,Low,lottery_prize,,You are selected for an international grant. Pay verification charges to receive the funds.,signal:pay_penalty_fee
+MSG0252,scam,legitimate,0,Low,lottery_prize,,You are selected for an international grant. Pay verification charges to receive the funds.,signal:pay_penalty_fee
+MSG0256,scam,legitimate,0,Low,lottery_prize,,You are selected for an international grant. Pay verification charges to receive the funds.,signal:pay_penalty_fee
+MSG0260,scam,legitimate,0,Low,lottery_prize,,You are selected for an international grant. Pay verification charges to receive the funds.,signal:pay_penalty_fee
+MSG0261,scam,legitimate,0,Low,tech_support_scam,,Your phone is infected. Install this APK from http://example.invalid/claim101 and disable Play Protect.,signal:off_platform_link;signal:unverified_domain
+MSG0262,scam,legitimate,0,Low,tech_support_scam,,We are from technical support. Share the screen and read out every OTP so we can remove the virus.,
+MSG0263,scam,legitimate,18,Low,tech_support_scam,,Your bank app has a security issue. Give remote access to our technician immediately.,signal:bank_government_claim;signal:urgency;urgent_threat
+MSG0265,scam,legitimate,0,Low,tech_support_scam,,Your phone is infected. Install this APK from http://example.invalid/claim105 and disable Play Protect.,signal:off_platform_link;signal:unverified_domain
+MSG0266,scam,legitimate,0,Low,tech_support_scam,,We are from technical support. Share the screen and read out every OTP so we can remove the virus.,
+MSG0267,scam,legitimate,18,Low,tech_support_scam,,Your bank app has a security issue. Give remote access to our technician immediately.,signal:bank_government_claim;signal:urgency;urgent_threat
+MSG0269,scam,legitimate,0,Low,tech_support_scam,,Your phone is infected. Install this APK from http://example.invalid/claim109 and disable Play Protect.,signal:off_platform_link;signal:unverified_domain
+MSG0270,scam,legitimate,0,Low,tech_support_scam,,We are from technical support. Share the screen and read out every OTP so we can remove the virus.,
+MSG0271,scam,legitimate,18,Low,tech_support_scam,,Your bank app has a security issue. Give remote access to our technician immediately.,signal:bank_government_claim;signal:urgency;urgent_threat
+MSG0273,scam,legitimate,0,Low,tech_support_scam,,Your phone is infected. Install this APK from http://example.invalid/claim113 and disable Play Protect.,signal:off_platform_link;signal:unverified_domain
+MSG0274,scam,legitimate,0,Low,tech_support_scam,,We are from technical support. Share the screen and read out every OTP so we can remove the virus.,
+MSG0275,scam,legitimate,18,Low,tech_support_scam,,Your bank app has a security issue. Give remote access to our technician immediately.,signal:bank_government_claim;signal:urgency;urgent_threat
+MSG0277,scam,legitimate,0,Low,tech_support_scam,,Your phone is infected. Install this APK from http://example.invalid/claim117 and disable Play Protect.,signal:off_platform_link;signal:unverified_domain
+MSG0278,scam,legitimate,0,Low,tech_support_scam,,We are from technical support. Share the screen and read out every OTP so we can remove the virus.,
+MSG0279,scam,legitimate,18,Low,tech_support_scam,,Your bank app has a security issue. Give remote access to our technician immediately.,signal:bank_government_claim;signal:urgency;urgent_threat
+MSG0283,scam,legitimate,0,Low,delivery_fee_scam,,Courier agent here. Send the OTP you just received so I can complete delivery.,signal:parcel_courier
+MSG0287,scam,legitimate,0,Low,delivery_fee_scam,,Courier agent here. Send the OTP you just received so I can complete delivery.,signal:parcel_courier
+MSG0291,scam,legitimate,0,Low,delivery_fee_scam,,Courier agent here. Send the OTP you just received so I can complete delivery.,signal:parcel_courier
+MSG0295,scam,legitimate,0,Low,delivery_fee_scam,,Courier agent here. Send the OTP you just received so I can complete delivery.,signal:parcel_courier
+MSG0299,scam,legitimate,0,Low,delivery_fee_scam,,Courier agent here. Send the OTP you just received so I can complete delivery.,signal:parcel_courier
+MSG0301,scam,legitimate,0,Low,impersonation_pressure,,I am calling from the cyber cell. Your account is linked to a crime. Transfer your balance to this safe account for verification.,signal:authority_investigation;signal:criminal_case_claim
+MSG0302,scam,legitimate,24,Low,impersonation_pressure,,This is your manager. Buy gift cards urgently and send me the redemption codes. Do not call me.,signal:urgency;unusual_payment
+MSG0304,scam,legitimate,0,Low,impersonation_pressure,,Police case registered against your Aadhaar. Pay the settlement amount now or you will be arrested.,signal:authority_investigation;signal:pay_penalty_fee
+MSG0305,scam,legitimate,0,Low,impersonation_pressure,,I am calling from the cyber cell. Your account is linked to a crime. Transfer your balance to this safe account for verification.,signal:authority_investigation;signal:criminal_case_claim
+MSG0306,scam,legitimate,24,Low,impersonation_pressure,,This is your manager. Buy gift cards urgently and send me the redemption codes. Do not call me.,signal:urgency;unusual_payment
+MSG0308,scam,legitimate,0,Low,impersonation_pressure,,Police case registered against your Aadhaar. Pay the settlement amount now or you will be arrested.,signal:authority_investigation;signal:pay_penalty_fee
+MSG0309,scam,legitimate,0,Low,impersonation_pressure,,I am calling from the cyber cell. Your account is linked to a crime. Transfer your balance to this safe account for verification.,signal:authority_investigation;signal:criminal_case_claim
+MSG0310,scam,legitimate,24,Low,impersonation_pressure,,This is your manager. Buy gift cards urgently and send me the redemption codes. Do not call me.,signal:urgency;unusual_payment
+MSG0312,scam,legitimate,0,Low,impersonation_pressure,,Police case registered against your Aadhaar. Pay the settlement amount now or you will be arrested.,signal:authority_investigation;signal:pay_penalty_fee
+MSG0313,scam,legitimate,0,Low,impersonation_pressure,,I am calling from the cyber cell. Your account is linked to a crime. Transfer your balance to this safe account for verification.,signal:authority_investigation;signal:criminal_case_claim
+MSG0314,scam,legitimate,24,Low,impersonation_pressure,,This is your manager. Buy gift cards urgently and send me the redemption codes. Do not call me.,signal:urgency;unusual_payment
+MSG0316,scam,legitimate,0,Low,impersonation_pressure,,Police case registered against your Aadhaar. Pay the settlement amount now or you will be arrested.,signal:authority_investigation;signal:pay_penalty_fee
+MSG0317,scam,legitimate,0,Low,impersonation_pressure,,I am calling from the cyber cell. Your account is linked to a crime. Transfer your balance to this safe account for verification.,signal:authority_investigation;signal:criminal_case_claim
+MSG0318,scam,legitimate,24,Low,impersonation_pressure,,This is your manager. Buy gift cards urgently and send me the redemption codes. Do not call me.,signal:urgency;unusual_payment
+MSG0320,scam,legitimate,0,Low,impersonation_pressure,,Police case registered against your Aadhaar. Pay the settlement amount now or you will be arrested.,signal:authority_investigation;signal:pay_penalty_fee

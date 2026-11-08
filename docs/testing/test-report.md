@@ -6,7 +6,7 @@ Date: 2026-11-08
 
 | Area | Result | Evidence |
 |---|---|---|
-| Backend, evaluation, URL scanner, OCR, PDF, migration, admin, and detector tests | Pass | 240 passed in 18.76s using the project venv Python 3.12.0; includes three migration revision/forward-compatibility tests, five admin tests, six OCR tests, two PDF endpoint tests, and signal-family detector regressions |
+| Backend, evaluation, URL scanner, OCR, PDF, migration, admin, and detector tests | Pass | 298 passed in 20.44s using the project venv Python 3.12.0 before the additional targeted detector changes; includes three migration revision/forward-compatibility tests, five admin tests, six OCR tests, two PDF endpoint tests, and signal-family detector regressions |
 | Frontend tests | Pass | 22 passed across 4 Vitest files, including screenshot upload, PDF download, URL provider states, auth errors, timeout/loading reset, category labels, local-time conversion, and admin analytics access/rendering |
 | Frontend production build | Pass with warning | Vite 8.3.6 build succeeded; minified JS chunk is 645.86 kB (190.13 kB gzip) with the existing >500 kB warning |
 | Local SQLite setup | Pass | `.env` uses `sqlite:///./local.db`; Alembic revisions 0001–0005 complete on SQLite and SQLite runtime enables foreign-key enforcement. The earlier file-backed smoke run at revision 0003 created 13 application tables. |
@@ -42,3 +42,8 @@ Tests cover redaction of OTP/credentials before an LLM request, URL origin extra
 ## Limitations
 
 Passing tests show only the listed cases. They do not establish production security or safety of unknown URLs. The authored evaluation set is small and illustrative; its held-out test split has only three examples per class, so its metrics are not reliable estimates of real-world performance. External LLM/provider calls were not made because credentials are not configured.
+
+
+## Latest detector-only verification — 8 November 2026
+
+After the additional rule changes recorded in `docs/testing/synthetic-stress-test-2026-11-08.md`, the focused detector test file passed **144 tests in 0.30s**. The complete backend suite has not yet been rerun against these latest edits in the uploaded archive environment because `langgraph` is not installed in that sandbox. Re-run the complete backend suite from the project's configured `.venv` before merging or presenting the patch.

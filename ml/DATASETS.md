@@ -19,3 +19,22 @@ python ml/evaluate.py
 ```
 
 The script writes no report file unless `--output` is supplied. LLM evaluation is skipped by default; `--include-llm` sends redacted validation, test, and train+validation CV samples to OpenAI if a key is configured. The full pipeline keeps external providers disabled unless `--allow-external` is passed. Five-fold stratified CV uses only train+validation; the test split is excluded. Reported intervals use 2,000 stratified paired percentile bootstrap replicates, preserving class counts.
+
+
+## `ml/data/sourced_scam_candidates.csv` — raw candidate-only corpus
+
+- **Current size:** 300 scam-labelled candidate rows; all marked `train` in the raw candidate file.
+- **Provenance:** 46 rows from the Hugging Face `bolewara/hinglish-scam-text-dataset` (CC BY 4.0; source label `1 (scam)`) and 254 rows from the Mendeley SMS Phishing dataset (CC BY 4.0; 253 source-labelled `Smishing`, one source-labelled `spam`).
+- **Important label distinction:** Smishing is a phishing/fraud category. Generic `spam` is not automatically equivalent to scam; the one `spam`-labelled row is held for manual adjudication.
+- **Quality status:** Candidate-only, not yet approved for model training. A structural audit found 9 normalized-exact pairs and 266 near-duplicate pairs, forming 189 connected similarity clusters. The category field is provisional and highly imbalanced; `lottery_prize` is 62.33% of rows. URL/phone redactions mean this corpus is not suitable for direct URL-feature evaluation.
+- **Use:** Preserve the raw file. Review one representative per similarity cluster, then adjudicate labels and categories with two reviewers. Accepted rows may be added to `indian_scam_examples.csv` as `split=train` only. Do not modify the frozen validation/test rows.
+- **Audit outputs:** `docs/testing/dataset-audit-2026-11-08.md` and `ml/reports/sourced_candidate_*.csv`.
+- **Re-run audit:** `python ml/audit_sourced_candidates.py`.
+
+## `ml/data/synthetic_stress_test_320.csv` — synthetic regression corpus only
+
+- **Current size:** 320 synthetic examples, balanced 160 scam / 160 legitimate.
+- **Purpose:** Development-time stress testing of the deterministic rule engine and regression triage only.
+- **Not for:** Training, claims of real-world accuracy, or independent benchmark reporting. It contains repeated template variants (116 connected similarity clusters).
+- **Current rules-only result:** 80.00% accuracy, 95.24% scam precision, 62.50% scam recall, 5 false positives, and 60 false negatives. See `docs/testing/synthetic-stress-test-2026-11-08.md`.
+- **Re-run:** `python ml/evaluate_rules_stress.py`.

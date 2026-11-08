@@ -1,0 +1,6 @@
+message_id,actual,predicted,score,risk_level,expected_category,detected_category,message,signals
+MSG0043,legitimate,scam,32,Moderate,upi_payment,upi_fraud,"Your UPI collect request for Rs. 3,499 was declined. No money was debited.",category:upi_fraud;financial_action
+MSG0047,legitimate,scam,32,Moderate,upi_payment,upi_fraud,"Your UPI collect request for Rs. 1,250 was declined. No money was debited.",category:upi_fraud;financial_action
+MSG0051,legitimate,scam,32,Moderate,upi_payment,upi_fraud,Your UPI collect request for Rs. 245 was declined. No money was debited.,category:upi_fraud;financial_action
+MSG0055,legitimate,scam,32,Moderate,upi_payment,upi_fraud,"Your UPI collect request for Rs. 12,000 was declined. No money was debited.",category:upi_fraud;financial_action
+MSG0059,legitimate,scam,32,Moderate,upi_payment,upi_fraud,Your UPI collect request for Rs. 780 was declined. No money was debited.,category:upi_fraud;financial_action

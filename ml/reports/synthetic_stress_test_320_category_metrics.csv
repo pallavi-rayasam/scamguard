@@ -1,0 +1,9 @@
+category,scam_support,scam_detected,scam_recall
+bank_impersonation,20,20,1.0
+delivery_fee_scam,20,20,1.0
+impersonation_pressure,20,20,1.0
+job_scam,20,20,1.0
+lottery_prize,20,20,1.0
+phishing_link,20,20,1.0
+tech_support_scam,20,20,1.0
+upi_collect_scam,20,20,1.0
