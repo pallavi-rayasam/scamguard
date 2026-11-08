@@ -21,7 +21,16 @@ treated as an active demand. OTP/security notices that tell people not to share
 codes are not treated as credential requests. These are heuristic rules; they
 do not establish whether a sender, payment request, or courier notice is real.
 
-Regression coverage includes the three manually found false negatives, the
-two-signal Moderate and three-signal High thresholds, 15 prize/courier
-lookalikes, and five bill, bank, and OTP hard negatives. The evaluation
-dataset and frozen test split were not changed or used for tuning.
+KYC checks also report account-verification, restriction/suspension,
+verification-link, bank/government-claim, urgency, and unverified-domain
+signals. KYC + an account restriction threat + a verification link scores at
+least Moderate. An unverified domain with urgency adds 8 points; an unverified
+domain paired with a bank/government claim adds 8 more. Domains outside the
+small trusted-domain list are described as unverified, not as malicious or
+proven unsafe.
+
+Regression coverage includes the three prize/courier false negatives, the new
+KYC phishing example, the two-signal Moderate and three-signal High thresholds,
+15 prize/courier lookalikes, five bill/bank/OTP hard negatives, and five genuine
+KYC/bank lookalikes. The evaluation dataset and frozen test split were not
+changed or used for tuning.

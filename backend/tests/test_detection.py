@@ -130,3 +130,66 @@ def test_legitimate_signal_lookalikes_remain_low_and_uncategorized(message):
 
     assert level == "Low", (message, score, result["findings"])
     assert result["category"] is None, (message, result["findings"])
+
+
+KYC_PHISHING_MESSAGE = (
+    "Your bank KYC is incomplete and your account will be restricted today. Verify immediately "
+    "through the link below to avoid suspension: abcd.com . Do not delay."
+)
+
+
+def test_kyc_phishing_regression_explains_each_score_contribution():
+    result = classify_message(KYC_PHISHING_MESSAGE)
+    score, level, scored_findings = score_findings(result["findings"])
+    weights = {finding["indicator"]: finding["score_weight"] for finding in scored_findings}
+
+    assert result["category"] == "fake_kyc"
+    assert {"kyc_verification", "account_restriction", "verify_link", "bank_government_claim", "unverified_domain", "urgency"} <= set(result["matched_signals"])
+    assert weights["urgent_threat"] == 18
+    assert weights["signal_combination:fake_kyc"] == 25
+    assert weights["unverified_domain_urgency"] == 8
+    assert weights["unverified_bank_domain"] == 8
+    assert score == 59
+    assert level in {"Moderate", "High"}
+
+
+def test_kyc_restriction_and_link_alone_reach_moderate():
+    result = classify_message("KYC verification is incomplete. Your account will be restricted. Verify through this link: notice.example.org")
+    score, level, _ = score_findings(result["findings"])
+
+    assert result["category"] == "fake_kyc"
+    assert score >= 25
+    assert level == "Moderate"
+
+
+KYC_LEGITIMATE_LOOKALIKES = [
+    pytest.param(
+        "Security notice from your bank: we will never send links. Do not click links; open the banking app directly to review your account.",
+        id="bank-says-do-not-click-links",
+    ),
+    pytest.param(
+        "Reminder: please update your KYC at a branch or in the official app by 30 June. Your account remains active and unrestricted.",
+        id="genuine-kyc-no-link-no-threat",
+    ),
+    pytest.param(
+        "Your monthly bank statement is ready in the official mobile app. No verification is needed and your account access is unchanged.",
+        id="statement-ready-notice",
+    ),
+    pytest.param(
+        "Your bank KYC record was refreshed; no action is needed. Do not reply to this message.",
+        id="kyc-record-refreshed",
+    ),
+    pytest.param(
+        "Annual identity review reminder: bring your documents to a branch if needed. We will not send a web link or restrict account access.",
+        id="annual-identity-review-in-branch",
+    ),
+]
+
+
+@pytest.mark.parametrize("message", KYC_LEGITIMATE_LOOKALIKES)
+def test_genuine_kyc_and_bank_lookalikes_remain_low(message):
+    result = classify_message(message)
+    score, level, _ = score_findings(result["findings"])
+
+    assert level == "Low", (message, score, result["findings"])
+    assert result["category"] is None, (message, result["findings"])
