@@ -77,6 +77,12 @@ SCAM_REGRESSIONS = [
         "courier_scam",
         {"parcel_courier", "prohibited_illegal", "pay_penalty_fee", "authority_customs", "coercive_threat"},
     ),
+    (
+        "parcel-redelivery-fee-phishing",
+        "Your parcel delivery is on hold due to an incomplete address. Pay Rs 25 redelivery charges immediately using this link: http://fake-delivery-example.com",
+        "courier_scam",
+        {"parcel_courier", "pay_penalty_fee", "urgency", "off_platform_link", "unverified_domain"},
+    ),
 ]
 
 

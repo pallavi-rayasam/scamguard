@@ -8,7 +8,60 @@
   {"code":"investment_fraud","name":"Investment fraud","language":"en","patterns":["guaranteed returns","double your money","risk free investment"],"signal_families":["guaranteed_return_claim"],"signal_combination":{"context":"guaranteed_return_claim","strong":["guaranteed_return_claim"],"action_required":["guaranteed_return_claim"],"minimum_signals":1,"high_signals":2}},
   {"code":"lottery_fraud","name":"Lottery fraud","language":"en","patterns":[],"signal_families":["prize_won","claim_collect","pay_penalty_fee","call_now","urgency","off_platform_link","upfront_benefit_fee"],"signal_combination":{"context":"prize_won","strong":["claim_collect","pay_penalty_fee","call_now","urgency","off_platform_link"],"action_required":["pay_penalty_fee","call_now","off_platform_link"],"minimum_signals":2,"high_signals":3},"additional_signal_combinations":[{"context":"prize_won","strong":["upfront_benefit_fee"],"action_required":["upfront_benefit_fee"],"minimum_signals":1,"high_signals":2}]},
   {"code":"digital_arrest","name":"Digital arrest","language":"en","patterns":["digital arrest","video call investigation","stay on the call with police"],"signal_families":["authority_investigation","criminal_case_claim","warrant_threat","stay_on_call"],"signal_combination":{"context":"authority_investigation","qualifying_context":["criminal_case_claim","warrant_threat"],"strong":["criminal_case_claim","warrant_threat","stay_on_call"],"action_required":["stay_on_call"],"minimum_signals":2,"high_signals":3}},
-  {"code":"courier_scam","name":"Courier scam","language":"en","patterns":[],"signal_families":["parcel_courier","authority_customs","prohibited_illegal","pay_penalty_fee","call_now","urgency","off_platform_link","coercive_threat"],"signal_combination":{"context":"parcel_courier","qualifying_context":["authority_customs","prohibited_illegal"],"strong":["authority_customs","prohibited_illegal","pay_penalty_fee","call_now","urgency","off_platform_link","coercive_threat"],"action_required":["pay_penalty_fee"],"minimum_signals":2,"high_signals":3}},
+  {
+  "code": "courier_scam",
+  "name": "Courier scam",
+  "language": "en",
+  "patterns": [],
+  "signal_families": [
+    "parcel_courier",
+    "authority_customs",
+    "prohibited_illegal",
+    "pay_penalty_fee",
+    "call_now",
+    "urgency",
+    "off_platform_link",
+    "coercive_threat",
+    "unverified_domain"
+  ],
+  "signal_combination": {
+    "context": "parcel_courier",
+    "qualifying_context": [
+      "authority_customs",
+      "prohibited_illegal"
+    ],
+    "strong": [
+      "authority_customs",
+      "prohibited_illegal",
+      "pay_penalty_fee",
+      "call_now",
+      "urgency",
+      "off_platform_link",
+      "coercive_threat"
+    ],
+    "action_required": [
+      "pay_penalty_fee"
+    ],
+    "minimum_signals": 2,
+    "high_signals": 3
+  },
+  "additional_signal_combinations": [
+    {
+      "context": "parcel_courier",
+      "strong": [
+        "pay_penalty_fee",
+        "urgency",
+        "off_platform_link",
+        "unverified_domain"
+      ],
+      "action_required": [
+        "pay_penalty_fee"
+      ],
+      "minimum_signals": 3,
+      "high_signals": 4
+    }
+  ]
+},
   {"code":"electricity_bill_scam","name":"Electricity bill scam","language":"en","patterns":["electricity will be disconnected","power will be cut tonight","update your electricity bill"],"signal_families":["utility_service","utility_disconnection","call_now","pay_penalty_fee","urgency"],"signal_combination":{"context":"utility_service","qualifying_context":["utility_disconnection"],"strong":["utility_disconnection","call_now","pay_penalty_fee","urgency"],"action_required":["call_now","pay_penalty_fee"],"minimum_signals":2,"high_signals":3}},
   {"code":"identity_impersonation","name":"Identity impersonation","language":"en","patterns":["we are from your bank","calling from police department","representative from uidai"]},
   {"code":"fake_customer_support","name":"Fake customer support","language":"en","patterns":["customer care number","screen sharing app","install remote support app"],"signal_families":["remote_support_app_install"],"signal_combination":{"context":"remote_support_app_install","strong":["remote_support_app_install"],"action_required":["remote_support_app_install"],"minimum_signals":1,"high_signals":2}},
