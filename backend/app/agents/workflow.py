@@ -1,7 +1,10 @@
 """Deterministic LangGraph orchestration for independent investigation stages."""
 from collections import Counter
 from datetime import datetime, timezone
+import json
+import logging
 import operator
+import re
 import time
 from typing import Annotated, TypedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +14,7 @@ import httpx
 
 from app.agents.contracts import AgentResult
 from app.core.config import settings
-from app.detection.normalize import extract_urls, load_organization_domains, normalize_text, privacy_safe_url, redact_sensitive, redact_urls_in_text
+from app.detection.normalize import extract_urls_for_scan, load_organization_domains, normalize_text, privacy_safe_url, redact_sensitive, redact_urls_in_text
 from app.detection.rules import classify_message
 from app.detection.scoring import evidence_strength, score_findings
 from app.detection.conversation import analyze_conversation, parse_conversation_text
@@ -22,6 +25,9 @@ from app.llm.provider import get_explanation_provider
 
 ORG_TO_DOMAINS = load_organization_domains()
 ORG_TOKENS = (*ORG_TO_DOMAINS.keys(), "police", "electricity board")
+THREAT_INTEL_PROVIDERS = ("google_safe_browsing", "virustotal")
+THREAT_INTEL_STATUSES = {"completed", "skipped", "failed", "timed_out", "unavailable"}
+logger = logging.getLogger(__name__)
 
 
 class WorkflowState(TypedDict, total=False):
@@ -67,20 +73,112 @@ def guarded_agent(names: list[str], function):
         started = time.monotonic()
         try:
             return function(state)
-        except (httpx.TimeoutException, TimeoutError):
+        except (httpx.TimeoutException, TimeoutError) as exc:
+            if "LLMExplanation" in names:
+                _log_llm_failure(exc, "timed_out")
             return {"runs": [_run(name, "timed_out", started, [], [], "Agent timed out.") for name in names]}
         except Exception as exc:
+            if "LLMExplanation" in names:
+                _log_llm_failure(exc, "failed")
             return {"runs": [_run(name, "failed", started, [], [], type(exc).__name__) for name in names]}
     return invoke
+
+
+def _log_llm_failure(exc: Exception, status: str) -> None:
+    """Log provider diagnostics without exception text, request content, or credentials."""
+    fields: dict[str, object] = {
+        "event": "llm_provider_failure",
+        "provider": settings.llm_provider,
+        "status": status,
+        "exception_type": type(exc).__name__,
+    }
+    if isinstance(exc, ValueError):
+        # Only emit a fixed category. Exception text from parsers/model output can
+        # contain submitted content, so it is intentionally never copied to logs.
+        category = getattr(exc, "diagnostic_category", None)
+        allowed_categories = {
+            "response_json_invalid",
+            "response_shape_invalid",
+            "choices_missing",
+            "response_truncated",
+            "message_content_missing",
+            "structured_output_invalid",
+            "evidence_quote_mismatch",
+        }
+        fields["failure_category"] = category if category in allowed_categories else "invalid_provider_response"
+    if isinstance(exc, httpx.ReadTimeout):
+        fields["failure_category"] = "read_timeout"
+    elif isinstance(exc, httpx.ConnectTimeout):
+        fields["failure_category"] = "connect_timeout"
+    elif isinstance(exc, httpx.ConnectError):
+        fields["failure_category"] = "connection_failure"
+    elif isinstance(exc, TimeoutError):
+        fields["failure_category"] = "overall_timeout"
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        response = exc.response
+        fields["http_status"] = response.status_code
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            provider_fields: dict[str, str] = {}
+            for key in ("type", "status", "code", "param"):
+                value = error.get(key)
+                if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.\-\[\]]{1,80}", value):
+                    fields[f"provider_error_{key}"] = value
+                    provider_fields[key] = value.casefold()
+            # Classify common provider failures using response metadata in memory only. Never
+            # log the provider message, which could contain echoed request material.
+            provider_message = error.get("message")
+            provider_message = provider_message.casefold() if isinstance(provider_message, str) else ""
+            provider_status = provider_fields.get("status", "")
+            provider_code = provider_fields.get("code", "")
+            provider_type = provider_fields.get("type", "")
+            model_error = "model" in (provider_code + " " + provider_message) and any(
+                term in provider_code + " " + provider_message
+                for term in ("not found", "does not exist", "unavailable", "invalid")
+            )
+            if response.status_code in {401, 403} or provider_status in {"unauthenticated", "permission_denied"} or (
+                response.status_code == 400 and "api key" in provider_message
+                and any(term in provider_message for term in ("invalid", "not valid", "expired"))
+            ):
+                fields["failure_category"] = "authentication_failure"
+            elif response.status_code == 404 or provider_status == "not_found" or model_error:
+                fields["failure_category"] = "model_or_endpoint_not_found"
+            elif response.status_code == 402:
+                fields["failure_category"] = "quota_exhausted"
+            elif response.status_code == 429:
+                classification = " ".join((provider_type, provider_status, provider_code, provider_message))
+                if any(term in classification for term in ("quota", "billing", "credit", "daily limit")):
+                    fields["failure_category"] = "quota_exhausted"
+                elif any(term in classification for term in ("rate limit", "rate_limit", "too many requests", "per minute")):
+                    fields["failure_category"] = "rate_limited"
+                else:
+                    fields["failure_category"] = "quota_or_rate_limit"
+        elif response.status_code == 429:
+            fields["failure_category"] = "quota_or_rate_limit"
+        elif response.status_code in {401, 403}:
+            fields["failure_category"] = "authentication_failure"
+        elif response.status_code == 402:
+            fields["failure_category"] = "quota_exhausted"
+        elif response.status_code == 404:
+            fields["failure_category"] = "model_or_endpoint_not_found"
+        elif response.status_code == 429:
+            fields["failure_category"] = "quota_or_rate_limit"
+        elif response.status_code >= 500:
+            fields["failure_category"] = "provider_unavailable"
+    logger.warning("llm_provider_failure %s", json.dumps(fields, sort_keys=True))
 
 
 def prepare(state: WorkflowState) -> dict:
     started = time.monotonic()
     original = normalize_text(state.get("input_text", ""))
-    urls = [privacy_safe_url(item) for item in extract_urls(original)]
-    urls = [url for url in urls if url]
+    urls = extract_urls_for_scan(original)
     redacted, redactions = redact_sensitive(original)
-    redacted = redact_urls_in_text(redacted, urls)
+    redacted = redact_urls_in_text(redacted, [privacy_safe_url(url) for url in urls])
     return {
         "normalized_text": original,
         "redacted_text": redacted,
@@ -134,40 +232,100 @@ def _scan_url_service(url: str) -> dict:
     }
 
 
-def _query_url_reputation_service(url: str) -> dict:
+def _unavailable_reputation_response(reason: str, origin: str | None = None) -> dict:
+    return {
+        "status": "unavailable",
+        "reason": reason,
+        "origin": origin,
+        "threat_intel_results": [
+            {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason}
+            for provider in THREAT_INTEL_PROVIDERS
+        ],
+    }
+
+
+def _normalize_reputation_response(payload: object, expected_origin: str) -> dict:
+    """Validate the scanner response and return exactly one explicit result per provider."""
+    if not isinstance(payload, dict):
+        return _unavailable_reputation_response("invalid_scanner_response", expected_origin)
+    overall_status = payload.get("status")
+    if not isinstance(overall_status, str) or overall_status not in {"completed", "blocked", "unavailable"}:
+        return _unavailable_reputation_response("invalid_scanner_response", expected_origin)
+    if payload.get("origin") != expected_origin:
+        return _unavailable_reputation_response("scanner_origin_mismatch", expected_origin)
+    if overall_status != "completed":
+        return _unavailable_reputation_response(
+            payload.get("reason") if isinstance(payload.get("reason"), str) else f"scanner_{overall_status}",
+            expected_origin,
+        )
+
+    raw_results = payload.get("threat_intel_results")
+    if not isinstance(raw_results, list):
+        return _unavailable_reputation_response("invalid_scanner_response", expected_origin)
+
+    grouped: dict[str, list[dict]] = {provider: [] for provider in THREAT_INTEL_PROVIDERS}
+    for item in raw_results:
+        if isinstance(item, dict):
+            provider = item.get("provider")
+            if isinstance(provider, str) and provider in grouped:
+                grouped[provider].append(item)
+
+    normalized: list[dict] = []
+    for provider in THREAT_INTEL_PROVIDERS:
+        candidates = grouped[provider]
+        if len(candidates) != 1:
+            reason = "scanner_provider_result_missing" if not candidates else "scanner_provider_result_ambiguous"
+            normalized.append({"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason})
+            continue
+
+        item = candidates[0]
+        provider_status = item.get("status")
+        malicious = item.get("is_malicious")
+        valid_malicious = malicious is None or isinstance(malicious, bool)
+        if (
+            not isinstance(provider_status, str)
+            or provider_status not in THREAT_INTEL_STATUSES
+            or not valid_malicious
+            or (provider_status != "completed" and malicious is not None)
+            or (provider == "google_safe_browsing" and provider_status == "completed" and not isinstance(malicious, bool))
+        ):
+            normalized.append({"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "invalid_scanner_response"})
+            continue
+
+        normalized_item = {
+            "provider": provider,
+            "status": provider_status,
+            "is_malicious": malicious,
+        }
+        for key in ("reason", "detail", "checked_at", "cached", "retry_count"):
+            value = item.get(key)
+            if isinstance(value, (str, bool, int)):
+                normalized_item[key] = value
+        normalized.append(normalized_item)
+
+    return {
+        "status": "completed",
+        "reason": None,
+        "origin": expected_origin,
+        "threat_intel_results": normalized,
+    }
+
+
+def _query_url_reputation_service(url: str, expected_origin: str) -> dict:
     """Ask the scanner's reputation stage to revalidate and query provider results."""
     endpoint = settings.url_scanner_url.rstrip("/") + "/reputation"
-    providers = ("google_safe_browsing", "virustotal")
     try:
         with httpx.Client(timeout=15.0, follow_redirects=False) as client:
             response = client.post(endpoint, json={"url": url})
         if response.status_code == 429:
-            reason = "scanner_rate_limited"
-            return {
-                "status": "unavailable",
-                "reason": reason,
-                "threat_intel_results": [
-                    {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason}
-                    for provider in providers
-                ],
-            }
+            return _unavailable_reputation_response("scanner_rate_limited", expected_origin)
         response.raise_for_status()
-        result = response.json()
-        if not isinstance(result, dict) or result.get("status") not in {"completed", "blocked", "unavailable"}:
-            raise ValueError("Invalid scanner reputation response")
-        return result
+        return _normalize_reputation_response(response.json(), expected_origin)
     except httpx.TimeoutException:
         reason = "scanner_timed_out"
     except (httpx.HTTPError, ValueError):
         reason = "scanner_unavailable"
-    return {
-        "status": "unavailable",
-        "reason": reason,
-        "threat_intel_results": [
-            {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason}
-            for provider in providers
-        ],
-    }
+    return _unavailable_reputation_response(reason, expected_origin)
 
 def message_agent(state: WorkflowState) -> dict:
     started = time.monotonic()
@@ -226,17 +384,6 @@ def url_agent(state: WorkflowState) -> dict:
     }
 
 
-def _provider_results_from_scan(scan_result: dict) -> list[dict]:
-    results = scan_result.get("threat_intel_results", [])
-    if results:
-        return results
-    reason = scan_result.get("reason", "target_not_publicly_validated")
-    return [
-        {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": reason}
-        for provider in ("google_safe_browsing", "virustotal")
-    ]
-
-
 def threat_intelligence_agent(state: WorkflowState) -> dict:
     """Query and reconcile reputation outcomes as a separate graph node."""
     started = time.monotonic()
@@ -251,27 +398,39 @@ def threat_intelligence_agent(state: WorkflowState) -> dict:
 
     scan_results = state.get("url_scan_results", [])
     if settings.url_scanner_url:
-        if not scan_results:
-            return {
-                "runs": [_run("ThreatIntelligence", "skipped", started, [], [], "No safe URL analysis result was available for reputation lookup.")],
-            }
-        def query_scan_result(scan_result: dict) -> dict:
-            origin = scan_result.get("origin")
-            if not origin:
-                return {"threat_intel_results": _provider_results_from_scan(scan_result)}
-            return _query_url_reputation_service(origin)
+        scan_requests = [
+            (url, scan_results[index] if index < len(scan_results) else None)
+            for index, url in enumerate(urls)
+        ]
 
-        with ThreadPoolExecutor(max_workers=max(1, min(6, len(scan_results)))) as pool:
-            reputation_batches = list(pool.map(query_scan_result, scan_results))
+        def query_scan_result(scan_request: tuple[str, dict | None]) -> dict:
+            url, scan_result = scan_request
+            expected_origin = privacy_safe_url(url)
+            if not isinstance(scan_result, dict):
+                return _unavailable_reputation_response("scanner_analysis_result_missing", expected_origin)
+            scan_origin = scan_result.get("origin")
+            if not scan_origin:
+                reason = scan_result.get("reason") if isinstance(scan_result.get("reason"), str) else "target_not_publicly_validated"
+                return _unavailable_reputation_response(reason, expected_origin)
+            if scan_origin != expected_origin:
+                return _unavailable_reputation_response("scanner_origin_mismatch", expected_origin)
+            return _query_url_reputation_service(url, expected_origin)
+
+        with ThreadPoolExecutor(max_workers=max(1, min(6, len(scan_requests)))) as pool:
+            reputation_batches = list(pool.map(query_scan_result, scan_requests))
         intel_results = [
-            item
-            for batch in reputation_batches
+            {**item, "origin": privacy_safe_url(url)}
+            for (url, _scan_result), batch in zip(scan_requests, reputation_batches, strict=True)
             for item in batch.get("threat_intel_results", [])
         ]
     else:
         with ThreadPoolExecutor(max_workers=max(1, min(6, len(urls)))) as pool:
             reputation_batches = list(pool.map(check_url_reputation, urls))
-        intel_results = [item for batch in reputation_batches for item in batch]
+        intel_results = [
+            {**item, "origin": privacy_safe_url(url)}
+            for url, batch in zip(urls, reputation_batches)
+            for item in batch
+        ]
 
     provider_statuses = {item.get("status") for item in intel_results}
     reasons = {item.get("reason", "") for item in intel_results}
@@ -351,13 +510,12 @@ def conversation_agent(state: WorkflowState) -> dict:
 
 def reconcile(state: WorkflowState) -> dict:
     started = time.monotonic()
-    results: dict[str, set[bool]] = {}
+    results_by_origin: dict[str | None, set[bool]] = {}
     for item in state.get("intel_results", []):
         if item.get("status") == "completed" and item.get("is_malicious") is not None:
-            results.setdefault(item["provider"], set()).add(bool(item["is_malicious"]))
-    values = [item.get("is_malicious") for item in state.get("intel_results", []) if item.get("status") == "completed" and item.get("is_malicious") is not None]
+            results_by_origin.setdefault(item.get("origin"), set()).add(bool(item["is_malicious"]))
     findings = []
-    if True in values and False in values:
+    if any({True, False} <= verdicts for verdicts in results_by_origin.values()):
         findings.append({"indicator":"intel_provider_conflict", "detail":"Configured threat-intel providers returned conflicting reputation results.", "verification_level":"heuristic", "source":"reconciliation", "score_weight":8})
     return {"findings": findings, "runs": [_run("VerifyAndReconcile", "completed", started, findings, ["conflict_check"])]}
 
@@ -411,15 +569,30 @@ def explain(state: WorkflowState) -> dict:
     started = time.monotonic()
     provider = get_explanation_provider()
     if not provider:
-        return {"explanation": "", "runs": [_run("LLMExplanation", "skipped", started, [], [], "OpenAI provider is not configured; deterministic report remains available.")]}
-    summary = {"category": state.get("category"), "risk_score": state.get("score"), "risk_level": state.get("risk_level"), "indicators": [item.get("detail") for item in state.get("findings", [])]}
+        return {"explanation": "", "runs": [_run("LLMExplanation", "skipped", started, [], [], "Configured LLM provider is not available; deterministic report remains available.")]}
+    provider_tool = {
+        "openai": "openai_responses_api",
+        "gemini": "gemini_interactions_api",
+        "groq": "groq_chat_completions_api",
+    }.get(settings.llm_provider, f"{settings.llm_provider}_api")
+    summary = {
+        "category": state.get("category"),
+        "risk_score": state.get("score"),
+        "risk_level": state.get("risk_level"),
+        "indicators": [
+            indicator[:100]
+            for item in state.get("findings", [])
+            if isinstance((indicator := item.get("indicator")), str)
+        ][:20],
+    }
     try:
         explanation = provider.explain(state.get("redacted_text", ""), summary)
-        finding = {"indicator":"llm_explanation", "detail":explanation, "verification_level":"llm_inferred", "source":"openai_responses_api", "score_weight":0}
-        return {"explanation": explanation, "findings": [finding], "runs": [_run("LLMExplanation", "completed", started, [finding], ["openai_responses_api"])]}
-    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-        status = "timed_out" if isinstance(exc, httpx.TimeoutException) else "failed"
-        return {"explanation": "", "runs": [_run("LLMExplanation", status, started, [], ["openai_responses_api"], type(exc).__name__)]}
+        finding = {"indicator":"llm_explanation", "detail":explanation, "verification_level":"llm_inferred", "source":provider_tool, "score_weight":0}
+        return {"explanation": explanation, "findings": [finding], "runs": [_run("LLMExplanation", "completed", started, [finding], [provider_tool])]}
+    except (httpx.HTTPError, RuntimeError, ValueError, TimeoutError) as exc:
+        status = "timed_out" if isinstance(exc, (httpx.TimeoutException, TimeoutError)) else "failed"
+        _log_llm_failure(exc, status)
+        return {"explanation": "", "runs": [_run("LLMExplanation", status, started, [], [provider_tool], type(exc).__name__)]}
 
 
 def finalize(state: WorkflowState) -> dict:
@@ -436,10 +609,15 @@ def finalize(state: WorkflowState) -> dict:
     limitations = [
         "No known threat found does not mean a URL is safe.",
         "The weighted risk score is not a calibrated probability.",
-        "URL paths and query strings are omitted before storage and threat-intel lookup.",
+        "URL paths and query parameters are sent to reputation providers for URL-specific checks; fragments are excluded and full URLs are omitted from the report.",
     ]
     if state.get("input_type") == "screenshot":
         limitations.append("Screenshot-extracted URLs receive structural checks only; they are not opened or sent to external reputation providers.")
+    report_urls = list(dict.fromkeys(
+        safe_url
+        for url in state.get("urls", [])
+        if (safe_url := privacy_safe_url(url))
+    ))
     report = {
         "input_type": state.get("input_type"),
         "category": category,
@@ -455,7 +633,7 @@ def finalize(state: WorkflowState) -> dict:
         "findings": findings,
         "evidence": [e for run in state.get("runs", []) for e in run.get("evidence", [])],
         "agents": state.get("runs", []),
-        "urls": state.get("urls", []),
+        "urls": report_urls,
         "threat_intel_results": state.get("intel_results", []),
         "url_scans": state.get("url_scan_results", []),
         "redactions": state.get("redactions", []),

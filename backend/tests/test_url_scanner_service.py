@@ -49,7 +49,7 @@ def test_unconfigured_providers_are_explicitly_unavailable_without_network(monke
     assert {result["reason"] for result in results} == {"not_configured"}
 
 
-def test_provider_queries_only_the_origin_and_caches_completed_results(monkeypatch):
+def test_google_safe_browsing_receives_full_url_drops_fragment_and_caches(monkeypatch, caplog):
     intel.clear_cache()
     monkeypatch.setattr(intel.settings, "google_safe_browsing_key", "test-google-key")
     requests = []
@@ -79,15 +79,18 @@ def test_provider_queries_only_the_origin_and_caches_completed_results(monkeypat
             return Response()
 
     monkeypatch.setattr(intel.httpx, "Client", Client)
-    origin_with_path = "https://example.com/pay?token=private"
-    first = intel.query_google_safe_browsing(origin_with_path)
-    second = intel.query_google_safe_browsing(origin_with_path)
+    full_url = "https://example.com/pay?token=private&next=%2Fhome#client-fragment"
+    expected_lookup_url = "https://example.com/pay?token=private&next=%2Fhome"
+    first = intel.query_google_safe_browsing(full_url)
+    second = intel.query_google_safe_browsing(expected_lookup_url)
 
     assert first["status"] == "completed" and first["is_malicious"] is False
     assert second["cached"] is True
     assert len(requests) == 1
-    assert requests[0][2]["threatInfo"]["threatEntries"] == [{"url": "https://example.com"}]
-    assert "token=private" not in str(requests[0])
+    assert requests[0][2]["threatInfo"]["threatEntries"] == [{"url": expected_lookup_url}]
+    assert "token=private" not in caplog.text
+    assert "test-google-key" not in caplog.text
+    assert "token=private" not in str(first)
 
 
 def test_provider_429_is_retried_once_then_returns_rate_limited(monkeypatch):
@@ -122,9 +125,10 @@ def test_provider_429_is_retried_once_then_returns_rate_limited(monkeypatch):
 
     monkeypatch.setattr(intel.httpx, "Client", Client)
     monkeypatch.setattr(intel.time, "sleep", delays.append)
-    result = intel.query_virustotal("https://example.com/path?private=1")
+    result = intel.query_virustotal("https://example.com/path?private=1#client-fragment")
 
     assert result["status"] == "unavailable"
+    assert result["is_malicious"] is None
     assert result["reason"] == "rate_limited"
     assert result["retry_count"] == 1
     assert len(calls) == 2
@@ -152,15 +156,16 @@ def test_provider_timeout_retries_once_and_returns_unavailable(monkeypatch):
             raise httpx.ReadTimeout("timed out")
 
     monkeypatch.setattr(intel.httpx, "Client", Client)
-    result = intel.query_google_safe_browsing("https://example.com")
+    result = intel.query_google_safe_browsing("https://example.com/path?check=timeout#client-fragment")
 
     assert result["status"] == "unavailable"
+    assert result["is_malicious"] is None
     assert result["reason"] == "timed_out"
     assert result["retry_count"] == 1
     assert len(calls) == 2
 
 
-def test_virustotal_known_threat_response_is_parsed_from_origin_only(monkeypatch):
+def test_virustotal_receives_full_url_and_parses_full_url_verdict(monkeypatch, caplog):
     import base64
     intel.clear_cache()
     monkeypatch.setattr(intel.settings, "virustotal_api_key", "test-vt-key")
@@ -191,13 +196,78 @@ def test_virustotal_known_threat_response_is_parsed_from_origin_only(monkeypatch
             return Response()
 
     monkeypatch.setattr(intel.httpx, "Client", Client)
-    result = intel.query_virustotal("https://example.com/private?account=123")
-    encoded_origin = requests[0][0].rsplit("/", 1)[-1]
+    result = intel.query_virustotal("https://example.com/private?account=123#client-fragment")
+    encoded_url = requests[0][0].rsplit("/", 1)[-1]
 
-    assert base64.urlsafe_b64decode(encoded_origin + "==").decode() == "https://example.com"
+    assert base64.urlsafe_b64decode(encoded_url + "==").decode() == "https://example.com/private?account=123"
     assert requests[0][1] == {"x-apikey": "test-vt-key"}
     assert result["status"] == "completed"
     assert result["is_malicious"] is True
+    assert "account=123" not in caplog.text
+    assert "test-vt-key" not in caplog.text
+    assert "account=123" not in str(result)
+
+
+@pytest.mark.parametrize("provider", ["google_safe_browsing", "virustotal"])
+def test_provider_cache_keeps_different_paths_and_queries_independent(monkeypatch, caplog, provider):
+    import base64
+
+    intel.clear_cache()
+    monkeypatch.setattr(intel.settings, "google_safe_browsing_key", "test-google-key")
+    monkeypatch.setattr(intel.settings, "virustotal_api_key", "test-vt-key")
+    requests = []
+    first_url = "https://same.example/login?flow=first"
+    second_url = "https://same.example/pay?flow=second"
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def __init__(self, malicious):
+            self.malicious = malicious
+
+        def json(self):
+            if provider == "google_safe_browsing":
+                return {"matches": [{"threatType": "MALWARE"}] if self.malicious else []}
+            return {"data": {"attributes": {"last_analysis_stats": {"malicious": int(self.malicious)}}}}
+
+        def raise_for_status(self):
+            return None
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, params, json):
+            lookup_url = json["threatInfo"]["threatEntries"][0]["url"]
+            requests.append(lookup_url)
+            return Response(lookup_url == second_url)
+
+        def get(self, endpoint, headers):
+            encoded = endpoint.rsplit("/", 1)[-1]
+            lookup_url = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode()
+            requests.append(lookup_url)
+            return Response(lookup_url == second_url)
+
+    monkeypatch.setattr(intel.httpx, "Client", Client)
+    query = intel.query_google_safe_browsing if provider == "google_safe_browsing" else intel.query_virustotal
+
+    first = query(first_url)
+    second = query(second_url)
+    cached_first = query(first_url)
+
+    assert first["is_malicious"] is False
+    assert second["is_malicious"] is True
+    assert cached_first["cached"] is True
+    assert requests == [first_url, second_url]
+    assert first_url not in caplog.text and second_url not in caplog.text
+    assert "test-google-key" not in caplog.text and "test-vt-key" not in caplog.text
 
 
 def test_dns_failure_is_unavailable_and_skips_provider_lookups(monkeypatch):
@@ -273,7 +343,7 @@ def test_scanner_blocks_private_targets_without_calling_reputation(monkeypatch):
 
 
 def test_scanner_falls_back_to_capped_get_when_head_is_unsupported(monkeypatch):
-    target = type("Target", (), {"origin": "https://example.com"})()
+    target = type("Target", (), {"origin": "https://example.com", "url": "https://example.com/path?query=private"})()
     calls = []
     monkeypatch.setattr(main, "validate_target", lambda _: target)
 
@@ -300,7 +370,7 @@ def test_scanner_falls_back_to_capped_get_when_head_is_unsupported(monkeypatch):
 
 @pytest.mark.parametrize("content_type,content_length", [("application/pdf", 100), ("text/html", 100_000)])
 def test_scanner_never_gets_binary_or_oversize_content(monkeypatch, content_type, content_length):
-    target = type("Target", (), {"origin": "https://example.com"})()
+    target = type("Target", (), {"origin": "https://example.com", "url": "https://example.com/file"})()
     calls = []
     monkeypatch.setattr(main, "validate_target", lambda _: target)
     monkeypatch.setattr(main, "safe_fetch", lambda url, method, **kwargs: (
@@ -316,7 +386,7 @@ def test_scanner_never_gets_binary_or_oversize_content(monkeypatch, content_type
 
 
 def test_redirect_guard_failure_skips_provider_queries(monkeypatch):
-    target = type("Target", (), {"origin": "https://example.com"})()
+    target = type("Target", (), {"origin": "https://example.com", "url": "https://example.com/start"})()
     monkeypatch.setattr(main, "validate_target", lambda _: target)
     monkeypatch.setattr(main, "safe_fetch", lambda *args, **kwargs: (_ for _ in ()).throw(SSRFBlocked("non_public_address")))
     monkeypatch.setattr(main, "check_reputation", lambda _: (_ for _ in ()).throw(AssertionError("must not query reputation")))
@@ -345,7 +415,7 @@ def test_scanner_service_rate_limits_requests_from_one_client():
     assert statuses[30] == 429
 
 def test_analyze_endpoint_does_not_query_reputation_providers(monkeypatch):
-    target = type("Target", (), {"origin": "https://example.com"})()
+    target = type("Target", (), {"origin": "https://example.com", "url": "https://example.com/"})()
     monkeypatch.setattr(main, "validate_target", lambda _: target)
     monkeypatch.setattr(
         main,
@@ -366,17 +436,21 @@ def test_analyze_endpoint_does_not_query_reputation_providers(monkeypatch):
 
 
 def test_reputation_endpoint_revalidates_before_provider_lookup(monkeypatch):
-    target = type("Target", (), {"origin": "https://example.com"})()
+    target = type("Target", (), {
+        "origin": "https://example.com",
+        "url": "https://example.com/pay?campaign=1",
+    })()
     queried = []
     monkeypatch.setattr(main, "validate_target", lambda url: target)
-    monkeypatch.setattr(main, "check_reputation", lambda origin: (
-        queried.append(origin) or [{"provider": "google_safe_browsing", "status": "unavailable", "is_malicious": None}]
+    monkeypatch.setattr(main, "check_reputation", lambda url: (
+        queried.append(url) or [{"provider": "google_safe_browsing", "status": "unavailable", "is_malicious": None}]
     ))
 
-    result = main.reputation(main.ScanRequest(url="https://example.com/"))
+    result = main.reputation(main.ScanRequest(url="https://example.com/pay?campaign=1#client-only"))
 
-    assert queried == [target.origin]
+    assert queried == [target.url]
     assert result["status"] == "completed"
+    assert result["origin"] == target.origin
     assert result["threat_intel_results"][0]["status"] == "unavailable"
 
 
@@ -386,17 +460,24 @@ def test_reputation_endpoint_accepts_public_ipv4_with_ipv6_unspecified_answer(mo
         (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("::", 80, 0, 0)),
     ]
     monkeypatch.setattr(socket, "getaddrinfo", lambda hostname, port, type: records)
-    monkeypatch.setattr(main, "check_reputation", lambda origin: [
-        {"provider": "google_safe_browsing", "status": "completed", "is_malicious": False, "reason": "no_known_threat"},
-    ])
+    queried = []
+    monkeypatch.setattr(main, "check_reputation", lambda url: (
+        queried.append(url) or [
+            {"provider": "google_safe_browsing", "status": "completed", "is_malicious": False, "reason": "no_known_threat"},
+        ]
+    ))
 
     with TestClient(main.app) as client:
         clear_scanner_rate_limit_events()
-        response = client.post("/reputation", json={"url": "http://testsafebrowsing.appspot.com/"})
+        response = client.post(
+            "/reputation",
+            json={"url": "http://testsafebrowsing.appspot.com/apiv4/ANY_PLATFORM/MALWARE/URL/?campaign=1#client-only"},
+        )
 
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
     assert response.json()["origin"] == "http://testsafebrowsing.appspot.com"
+    assert queried == ["http://testsafebrowsing.appspot.com/apiv4/ANY_PLATFORM/MALWARE/URL/?campaign=1"]
     assert response.json()["threat_intel_results"][0]["status"] == "completed"
 
 

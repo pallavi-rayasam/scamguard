@@ -59,6 +59,48 @@ def extract_urls(text: str) -> list[str]:
     return values[:3]
 
 
+def extract_urls_for_scan(text: str) -> list[str]:
+    """Extract canonical HTTP(S) URLs for lookup, keeping path/query but no fragment."""
+    values: list[str] = []
+    for match in URL_RE.findall(text):
+        candidate = match.rstrip(".,;:!?)]}")
+        normalized = normalize_url_for_scan(candidate)
+        if normalized and normalized not in values:
+            values.append(normalized)
+    return values[:3]
+
+
+def normalize_url_for_scan(raw_url: str) -> str:
+    """Normalize URL authority without changing its path/query; fragments are client-only."""
+    candidate = raw_url.strip()
+    if candidate.lower().startswith("www."):
+        candidate = "https://" + candidate
+    elif not candidate.lower().startswith(("http://", "https://")):
+        candidate = "https://" + candidate
+    try:
+        parsed = urlsplit(candidate)
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"} or not parsed.hostname or parsed.username is not None or parsed.password is not None:
+            return ""
+        hostname = parsed.hostname.rstrip(".")
+        if ":" not in hostname:
+            hostname = hostname.encode("idna").decode("ascii").lower()
+        else:
+            hostname = hostname.lower()
+        port = parsed.port
+        default_port = 443 if scheme == "https" else 80
+        display_host = f"[{hostname}]" if ":" in hostname else hostname
+        authority = display_host if port is None or port == default_port else f"{display_host}:{port}"
+        return parsed._replace(
+            scheme=scheme,
+            netloc=authority,
+            path=parsed.path or "/",
+            fragment="",
+        ).geturl()
+    except (UnicodeError, ValueError):
+        return ""
+
+
 def privacy_safe_url(raw_url: str) -> str:
     """Keep only scheme, host, and optional port; drop userinfo, path, query and fragment."""
     candidate = raw_url if raw_url.lower().startswith(("http://", "https://")) else "https://" + raw_url

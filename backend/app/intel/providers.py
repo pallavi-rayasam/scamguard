@@ -7,6 +7,7 @@ import time
 import httpx
 
 from app.core.config import settings
+from app.detection.normalize import normalize_url_for_scan
 
 _CACHE: dict[tuple[str, str], tuple[datetime, dict]] = {}
 _TTL = timedelta(minutes=5)
@@ -40,6 +41,9 @@ def query_google_safe_browsing(url: str) -> dict:
     provider = "google_safe_browsing"
     if not settings.google_safe_browsing_key:
         return _unavailable(provider, "API key not configured; lookup skipped.")
+    url = normalize_url_for_scan(url)
+    if not url:
+        return _unavailable(provider, "Invalid HTTP(S) URL; lookup skipped.")
     cached = _cached(provider, url)
     if cached:
         return cached
@@ -82,6 +86,9 @@ def query_virustotal(url: str) -> dict:
     provider = "virustotal"
     if not settings.virustotal_api_key:
         return _unavailable(provider, "API key not configured; lookup skipped.")
+    url = normalize_url_for_scan(url)
+    if not url:
+        return _unavailable(provider, "Invalid HTTP(S) URL; lookup skipped.")
     cached = _cached(provider, url)
     if cached:
         return cached
@@ -117,5 +124,5 @@ def query_virustotal(url: str) -> dict:
 
 
 def check_url_reputation(url: str) -> list[dict]:
-    """Lookups disclose only the submitted URL origin; path and query are stripped upstream."""
+    """Look up the full normalized URL; fragments are omitted and cache keys are hashed."""
     return [query_google_safe_browsing(url), query_virustotal(url)]

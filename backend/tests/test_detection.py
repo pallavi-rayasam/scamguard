@@ -1,6 +1,6 @@
 import pytest
 
-from app.detection.normalize import extract_urls, redact_sensitive
+from app.detection.normalize import extract_urls, extract_urls_for_scan, redact_sensitive
 from app.detection.rules import classify_message
 from app.detection.scoring import risk_level, score_findings
 from app.detection.url_checks import inspect_url
@@ -16,6 +16,24 @@ def test_sensitive_values_are_redacted_before_storage():
 
 def test_url_extraction_drops_paths_and_query_values():
     assert extract_urls("Check https://example.in/login?session=secret now") == ["https://example.in"]
+
+
+def test_scan_url_extraction_preserves_path_and_query_but_drops_fragment():
+    text = "Check https://example.in/CaseSensitive/path?session=secret&next=%2Fpay#client-only now"
+
+    assert extract_urls_for_scan(text) == [
+        "https://example.in/CaseSensitive/path?session=secret&next=%2Fpay"
+    ]
+    assert extract_urls(text) == ["https://example.in"]
+
+
+def test_scan_url_extraction_keeps_same_host_paths_as_independent_urls():
+    text = "https://example.in/login?flow=one and https://example.in/pay?flow=two"
+
+    assert extract_urls_for_scan(text) == [
+        "https://example.in/login?flow=one",
+        "https://example.in/pay?flow=two",
+    ]
 
 
 def test_classification_uses_seeded_indian_scam_patterns():

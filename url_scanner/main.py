@@ -126,12 +126,12 @@ def scan_url(url: str, include_intel: bool = True) -> dict:
     except FetchUnavailable as exc:
         fetch_result = {"status": "unavailable", "reason": exc.code}
 
-    intel_results = check_reputation(target.origin) if include_intel else []
+    intel_results = check_reputation(target.url) if include_intel else []
     for result in intel_results:
         if result.get("is_malicious") is True:
             findings.append({
                 "indicator": f"threat_intel:{result['provider']}",
-                "detail": f"{result['provider']} reported a known threat for this URL origin.",
+                "detail": f"{result['provider']} reported a known threat for this URL.",
                 "verification_level": "verified",
                 "source": result["provider"],
                 "score_weight": 40,
@@ -190,7 +190,7 @@ def reputation(payload: ScanRequest) -> dict:
         "status": "completed",
         "reason": None,
         "origin": target.origin,
-        "threat_intel_results": check_reputation(target.origin),
+        "threat_intel_results": check_reputation(target.url),
     }
 
 @app.post("/scan")

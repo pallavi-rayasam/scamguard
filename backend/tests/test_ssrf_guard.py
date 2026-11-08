@@ -2,8 +2,10 @@ import ipaddress
 from io import BytesIO
 from pathlib import Path
 import socket
+import ssl
 import sys
 
+import certifi
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,6 +81,16 @@ def test_public_ipv4_with_ipv6_unspecified_dns_answer_is_accepted(monkeypatch):
     target = validate_target("http://testsafebrowsing.appspot.com/")
 
     assert target.addresses == ("20.193.173.92",)
+
+
+def test_ssrf_validation_preserves_path_and_query_but_never_fragment(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: [dns_record("93.184.216.34", port)])
+
+    target = validate_target("https://example.test/a%2Fb?next=%2Fpay&x=1#client-only")
+
+    assert target.origin == "https://example.test"
+    assert target.url == "https://example.test/a%2Fb?next=%2Fpay&x=1"
+    assert target.request_target == "/a%2Fb?next=%2Fpay&x=1"
 
 
 def test_public_ipv4_and_private_ipv4_are_still_rejected_with_unspecified_answer(monkeypatch):
@@ -182,23 +194,35 @@ def test_dns_answer_is_pinned_to_numeric_ip_and_get_body_is_capped(monkeypatch):
     assert not hasattr(result, "body")
 
 
-def test_head_never_reads_or_returns_a_response_body(monkeypatch):
+def test_head_uses_certifi_ca_bundle_with_hostname_verification_and_never_reads_body(monkeypatch):
     fake = FakeSocket(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 1000000\r\n\r\nignored")
     seen_sni = []
+    contexts = []
+    real_create_default_context = ssl.create_default_context
 
     class FakeTLSContext:
+        def __init__(self, real_context):
+            self.verify_mode = real_context.verify_mode
+            self.check_hostname = real_context.check_hostname
+
         def wrap_socket(self, connection, server_hostname):
             seen_sni.append(server_hostname)
             return connection
 
+    def create_test_context(*, cafile):
+        context = real_create_default_context(cafile=cafile)
+        contexts.append((cafile, context.verify_mode, context.check_hostname))
+        return FakeTLSContext(context)
+
     monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: [dns_record("93.184.216.34", port)])
     monkeypatch.setattr(socket, "create_connection", lambda address, timeout: fake)
-    monkeypatch.setattr("url_scanner.ssrf_guard.ssl.create_default_context", FakeTLSContext)
+    monkeypatch.setattr("url_scanner.ssrf_guard.ssl.create_default_context", create_test_context)
 
     result = safe_fetch("https://example.test/", method="HEAD")
 
     assert fake.request.startswith(b"HEAD / HTTP/1.1\r\n")
     assert seen_sni == ["example.test"]
+    assert contexts == [(certifi.where(), ssl.CERT_REQUIRED, True)]
     assert result.body_bytes == 0
     assert result.body_truncated is False
 

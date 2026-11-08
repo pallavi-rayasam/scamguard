@@ -7,7 +7,7 @@ import base64
 import hashlib
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -21,21 +21,21 @@ _CACHE_MAX_ENTRIES = 2048
 _MAX_RETRY_AFTER_SECONDS = 0.5
 
 
-def _origin_only(value: str) -> str:
+def _lookup_url(value: str) -> str:
     parsed = urlsplit(value)
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError("A validated HTTP(S) origin is required")
+        raise ValueError("A validated HTTP(S) URL is required")
     host = parsed.hostname.encode("idna").decode("ascii").lower()
     if ":" in host:
         host = f"[{host}]"
     port = parsed.port
     default = 443 if parsed.scheme.lower() == "https" else 80
     authority = f"{host}:{port}" if port and port != default else host
-    return f"{parsed.scheme.lower()}://{authority}"
+    return urlunsplit((parsed.scheme.lower(), authority, parsed.path or "/", parsed.query, ""))
 
 
-def _key(provider: str, origin: str) -> tuple[str, str]:
-    return provider, hashlib.sha256(origin.encode("utf-8")).hexdigest()
+def _key(provider: str, url: str) -> tuple[str, str]:
+    return provider, hashlib.sha256(url.encode("utf-8")).hexdigest()
 
 
 def _unavailable(provider: str, reason: str, retry_count: int = 0) -> dict:
@@ -50,10 +50,10 @@ def _unavailable(provider: str, reason: str, retry_count: int = 0) -> dict:
     }
 
 
-def _cache_get(provider: str, origin: str) -> dict | None:
+def _cache_get(provider: str, url: str) -> dict | None:
     now = time.monotonic()
     with _CACHE_LOCK:
-        key = _key(provider, origin)
+        key = _key(provider, url)
         item = _CACHE.get(key)
         if not item:
             return None
@@ -65,10 +65,10 @@ def _cache_get(provider: str, origin: str) -> dict | None:
         return {**result, "cached": True}
 
 
-def _cache_set(provider: str, origin: str, result: dict) -> dict:
+def _cache_set(provider: str, url: str, result: dict) -> dict:
     with _CACHE_LOCK:
-        _CACHE[_key(provider, origin)] = (time.monotonic() + min(max(settings.cache_ttl_seconds, 1), 3600), result)
-        _CACHE.move_to_end(_key(provider, origin))
+        _CACHE[_key(provider, url)] = (time.monotonic() + min(max(settings.cache_ttl_seconds, 1), 3600), result)
+        _CACHE.move_to_end(_key(provider, url))
         while len(_CACHE) > _CACHE_MAX_ENTRIES:
             _CACHE.popitem(last=False)
     return result
@@ -88,14 +88,14 @@ def _retry_delay(response: httpx.Response) -> float:
     return max(0.0, min(suggested, _MAX_RETRY_AFTER_SECONDS))
 
 
-def _call(provider: str, origin: str, api_key: str, endpoint: str) -> dict:
+def _call(provider: str, url: str, api_key: str, endpoint: str) -> dict:
     if not api_key:
         return _unavailable(provider, "not_configured")
-    safe_origin = _origin_only(origin)
-    cached = _cache_get(provider, safe_origin)
+    lookup_url = _lookup_url(url)
+    cached = _cache_get(provider, lookup_url)
     if cached:
         return cached
-    url_id = base64.urlsafe_b64encode(safe_origin.encode("utf-8")).decode("ascii").rstrip("=")
+    url_id = base64.urlsafe_b64encode(lookup_url.encode("utf-8")).decode("ascii").rstrip("=")
     request_url = f"{endpoint}/{url_id}" if provider == "virustotal" else endpoint
     attempts = 2
     for attempt in range(attempts):
@@ -111,7 +111,7 @@ def _call(provider: str, origin: str, api_key: str, endpoint: str) -> dict:
                                 "threatTypes": ["SOCIAL_ENGINEERING", "MALWARE", "UNWANTED_SOFTWARE"],
                                 "platformTypes": ["ANY_PLATFORM"],
                                 "threatEntryTypes": ["URL"],
-                                "threatEntries": [{"url": safe_origin}],
+                                "threatEntries": [{"url": lookup_url}],
                             },
                         },
                     )
@@ -131,7 +131,7 @@ def _call(provider: str, origin: str, api_key: str, endpoint: str) -> dict:
                     "reason": "no_report", "checked_at": datetime.now(timezone.utc).isoformat(),
                     "cached": False, "retry_count": attempt,
                 }
-                return _cache_set(provider, safe_origin, result)
+                return _cache_set(provider, lookup_url, result)
             response.raise_for_status()
             payload = response.json()
             if provider == "google_safe_browsing":
@@ -145,7 +145,7 @@ def _call(provider: str, origin: str, api_key: str, endpoint: str) -> dict:
                 "checked_at": datetime.now(timezone.utc).isoformat(), "cached": False,
                 "retry_count": attempt,
             }
-            return _cache_set(provider, safe_origin, result)
+            return _cache_set(provider, lookup_url, result)
         except httpx.TimeoutException:
             if attempt + 1 == attempts:
                 return _unavailable(provider, "timed_out", retry_count=attempt)
@@ -155,14 +155,14 @@ def _call(provider: str, origin: str, api_key: str, endpoint: str) -> dict:
     return _unavailable(provider, "request_failed", retry_count=attempts - 1)
 
 
-def query_google_safe_browsing(origin: str) -> dict:
-    return _call("google_safe_browsing", origin, settings.google_safe_browsing_key, GOOGLE_ENDPOINT)
+def query_google_safe_browsing(url: str) -> dict:
+    return _call("google_safe_browsing", url, settings.google_safe_browsing_key, GOOGLE_ENDPOINT)
 
 
-def query_virustotal(origin: str) -> dict:
-    return _call("virustotal", origin, settings.virustotal_api_key, VIRUSTOTAL_ENDPOINT)
+def query_virustotal(url: str) -> dict:
+    return _call("virustotal", url, settings.virustotal_api_key, VIRUSTOTAL_ENDPOINT)
 
 
-def check_reputation(origin: str) -> list[dict]:
+def check_reputation(url: str) -> list[dict]:
     """Return two explicit provider states; no configured provider means unavailable."""
-    return [query_google_safe_browsing(origin), query_virustotal(origin)]
+    return [query_google_safe_browsing(url), query_virustotal(url)]

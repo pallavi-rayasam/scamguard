@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -16,13 +16,15 @@ from app.api import routes
 from app.core import security
 from app.db.base import Base
 from app.db.session import get_db
-from app.models.entities import Investigation, User
+from app.models.entities import Investigation, ThreatIntelResult, User
 from app.main import RequestGuardMiddleware, app
 from app.ocr import MAX_IMAGE_BYTES
 
 
 @pytest.fixture
 def client(monkeypatch):
+    from app.agents import workflow
+
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     Base.metadata.create_all(engine)
@@ -38,6 +40,7 @@ def client(monkeypatch):
     test_settings = replace(security.settings, secret_key="test-secret-key-that-is-at-least-32-bytes")
     monkeypatch.setattr(security, "settings", test_settings)
     monkeypatch.setattr(routes, "settings", test_settings)
+    monkeypatch.setattr(workflow, "get_explanation_provider", lambda: None)
     app.dependency_overrides[get_db] = override_db
     with TestClient(app) as test_client:
         app.state.test_session_factory = testing_session
@@ -155,6 +158,38 @@ def test_investigation_is_persisted_as_redacted_report(client):
     assert "123456" not in detail.json()["redacted_content"]
 
 
+def test_unicode_explanation_survives_persistence_and_api_json(client, monkeypatch):
+    from app.agents import workflow
+
+    explanation = "The recipient’s account — £900… Verify through the official channel."
+
+    class UnicodeProvider:
+        def explain(self, _redacted_text, _summary):
+            return explanation
+
+    monkeypatch.setattr(workflow, "get_explanation_provider", lambda: UnicodeProvider())
+    csrf = _register_for_image(client)
+
+    response = client.post(
+        "/api/investigations/text",
+        headers={"X-CSRF-Token": csrf},
+        json={"text": "Hi, are we meeting at 5pm?", "input_type": "text"},
+    )
+
+    assert response.status_code == 201
+    assert response.content.decode("utf-8")
+    assert response.json()["explanation"] == explanation
+    assert response.json()["risk_score"] == 0
+    report_id = UUID(response.json()["id"])
+    with client.app.state.test_session_factory() as db:
+        saved = db.get(Investigation, report_id)
+        assert saved.report_json["explanation"] == explanation
+
+    detail = client.get(f"/api/investigations/{report_id}/report")
+    assert detail.status_code == 200
+    assert detail.json()["explanation"] == explanation
+
+
 def test_unmatched_report_is_uncategorized_and_timestamps_remain_utc(client):
     csrf = client.get("/api/auth/csrf").json()["csrf_token"]
     client.post(
@@ -231,6 +266,190 @@ def test_unavailable_scanner_status_is_persisted(client, monkeypatch):
     assert report["evidence_strength"] == "Limited"
     assert {item["verification_level"] for item in report["findings"]} == {"heuristic"}
     assert client.get(f"/api/investigations/{report['id']}").status_code == 200
+
+
+def test_authenticated_url_investigation_uses_scanner_and_persists_malicious_verdict(client, monkeypatch):
+    import httpx
+    from app.agents import workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "settings",
+        replace(workflow.settings, url_scanner_url="http://127.0.0.1:8001"),
+    )
+    monkeypatch.setattr(workflow, "get_explanation_provider", lambda: None)
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            assert kwargs["follow_redirects"] is False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, json):
+            calls.append((endpoint, json))
+            if endpoint.endswith("/analyze"):
+                payload = {"status": "completed", "origin": "https://example.com", "findings": []}
+            else:
+                payload = {
+                    "status": "completed",
+                    "origin": "https://example.com",
+                    "threat_intel_results": [
+                        {"provider": "google_safe_browsing", "status": "completed", "is_malicious": False, "reason": "no_known_threat", "detail": "No known threat found; not verified safe."},
+                        {"provider": "virustotal", "status": "completed", "is_malicious": True, "reason": "known_threat", "detail": "VirusTotal reported a known threat."},
+                    ],
+                }
+            return httpx.Response(200, json=payload, request=httpx.Request("POST", endpoint))
+
+    monkeypatch.setattr(workflow.httpx, "Client", FakeClient)
+
+    session = client.get("/api/auth/csrf")
+    csrf = session.json()["csrf_token"]
+    registered = client.post(
+        "/api/auth/register",
+        headers={"X-CSRF-Token": csrf},
+        json={"email": "url-investigation@example.com", "password": "correct-horse-battery"},
+    )
+    assert registered.status_code == 201
+
+    csrf = client.get("/api/auth/csrf").json()["csrf_token"]
+    response = client.post(
+        "/api/investigations/text",
+        headers={"X-CSRF-Token": csrf},
+        json={"text": "https://example.com/login?session=private#browser-only", "input_type": "url"},
+    )
+
+    assert response.status_code == 201
+    report = response.json()
+    assert report["input_type"] == "url"
+    assert report["urls"] == ["https://example.com"]
+    assert [endpoint for endpoint, _ in calls] == [
+        "http://127.0.0.1:8001/analyze",
+        "http://127.0.0.1:8001/reputation",
+    ]
+    assert all(payload == {"url": "https://example.com/login?session=private"} for _, payload in calls)
+    assert {item["provider"]: item["status"] for item in report["threat_intel_results"]} == {
+        "google_safe_browsing": "completed",
+        "virustotal": "completed",
+    }
+    assert "threat_intel:virustotal" in {item["indicator"] for item in report["findings"]}
+    assert "intel_provider_conflict" in {item["indicator"] for item in report["findings"]}
+    assert report["risk_score"] == 48
+    assert report["risk_level"] == "Moderate"
+    assert "session=private" not in response.text
+    assert "browser-only" not in response.text
+    saved_response = client.get(f"/api/investigations/{report['id']}")
+    assert saved_response.status_code == 200
+    saved_report = saved_response.json()
+    assert "threat_intel:virustotal" in {item["indicator"] for item in saved_report["findings"]}
+    assert {item["provider"]: item["is_malicious"] for item in saved_report["threat_intel_results"]} == {
+        "google_safe_browsing": False,
+        "virustotal": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "google_malicious,virustotal_malicious,expected_score,expected_level",
+    [
+        (True, False, 48, "Moderate"),
+        (False, True, 48, "Moderate"),
+        (True, True, 80, "Critical"),
+    ],
+)
+def test_authenticated_url_report_contains_each_scanner_verdict_and_scores_it(
+    client, monkeypatch, google_malicious, virustotal_malicious, expected_score, expected_level
+):
+    import httpx
+    from app.agents import workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "settings",
+        replace(workflow.settings, url_scanner_url="http://127.0.0.1:8001"),
+    )
+    monkeypatch.setattr(workflow, "get_explanation_provider", lambda: None)
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            assert kwargs["follow_redirects"] is False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, json):
+            if endpoint.endswith("/analyze"):
+                payload = {"status": "completed", "origin": "https://report.example", "findings": []}
+            else:
+                payload = {
+                    "status": "completed",
+                    "origin": "https://report.example",
+                    "threat_intel_results": [
+                        {
+                            "provider": "google_safe_browsing",
+                            "status": "completed",
+                            "is_malicious": google_malicious,
+                            "reason": "known_threat" if google_malicious else "no_known_threat",
+                        },
+                        {
+                            "provider": "virustotal",
+                            "status": "completed",
+                            "is_malicious": virustotal_malicious,
+                            "reason": "known_threat" if virustotal_malicious else "no_known_threat",
+                        },
+                    ],
+                }
+            return httpx.Response(200, json=payload, request=httpx.Request("POST", endpoint))
+
+    monkeypatch.setattr(workflow.httpx, "Client", FakeClient)
+    csrf = client.get("/api/auth/csrf").json()["csrf_token"]
+    registered = client.post(
+        "/api/auth/register",
+        headers={"X-CSRF-Token": csrf},
+        json={
+            "email": f"url-verdict-{google_malicious}-{virustotal_malicious}@example.com",
+            "password": "correct-horse-battery",
+        },
+    )
+    assert registered.status_code == 201
+
+    csrf = client.get("/api/auth/csrf").json()["csrf_token"]
+    response = client.post(
+        "/api/investigations/text",
+        headers={"X-CSRF-Token": csrf},
+        json={"text": "https://report.example/check?source=report-test", "input_type": "url"},
+    )
+
+    assert response.status_code == 201
+    report = response.json()
+    outcomes = {item["provider"]: item for item in report["threat_intel_results"]}
+    expected_verdicts = {
+        "google_safe_browsing": google_malicious,
+        "virustotal": virustotal_malicious,
+    }
+    assert {provider: outcome["is_malicious"] for provider, outcome in outcomes.items()} == expected_verdicts
+    expected_findings = {
+        f"threat_intel:{provider}"
+        for provider, malicious in expected_verdicts.items()
+        if malicious
+    }
+    assert expected_findings <= {item["indicator"] for item in report["findings"]}
+    assert report["risk_score"] == expected_score
+    assert report["risk_level"] == expected_level
+
+    saved_report = client.get(f"/api/investigations/{report['id']}").json()
+    assert saved_report["threat_intel_results"] == report["threat_intel_results"]
+    with client.app.state.test_session_factory() as db:
+        rows = db.scalars(
+            select(ThreatIntelResult).where(ThreatIntelResult.investigation_id == UUID(report["id"]))
+        ).all()
+    assert {row.provider: row.is_malicious for row in rows} == expected_verdicts
 
 
 def _register_for_image(client):

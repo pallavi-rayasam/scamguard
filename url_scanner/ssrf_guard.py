@@ -8,6 +8,7 @@ implicitly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import certifi
 import http.client
 import ipaddress
 import math
@@ -199,7 +200,7 @@ def _open_pinned_socket(target: ValidatedTarget, address: str, timeout: float):
     connection = socket.create_connection((address, target.port), timeout=timeout)
     connection.settimeout(timeout)
     if target.scheme == "https":
-        context = ssl.create_default_context()
+        context = ssl.create_default_context(cafile=certifi.where())
         try:
             connection = context.wrap_socket(connection, server_hostname=target.hostname)
         except Exception:
