@@ -1,12 +1,12 @@
 # Verification report
 
-Date: 2026-11-07
+Date: 2026-11-08
 
 ## Results
 
 | Area | Result | Evidence |
 |---|---|---|
-| Backend, evaluation, URL scanner, OCR, PDF, migration, and admin tests | Pass | 179 passed in 17.49s using the project venv Python 3.12.0; includes three migration revision/forward-compatibility tests, five admin tests, six OCR tests, and two PDF endpoint tests |
+| Backend, evaluation, URL scanner, OCR, PDF, migration, admin, and detector tests | Pass | 205 passed in 17.62s using the project venv Python 3.12.0; includes three migration revision/forward-compatibility tests, five admin tests, six OCR tests, two PDF endpoint tests, and signal-family detector regressions |
 | Frontend tests | Pass | 22 passed across 4 Vitest files, including screenshot upload, PDF download, URL provider states, auth errors, timeout/loading reset, category labels, local-time conversion, and admin analytics access/rendering |
 | Frontend production build | Pass with warning | Vite 8.3.6 build succeeded; minified JS chunk is 645.86 kB (190.13 kB gzip) with the existing >500 kB warning |
 | Local SQLite setup | Pass | `.env` uses `sqlite:///./local.db`; Alembic revisions 0001–0005 complete on SQLite and SQLite runtime enables foreign-key enforcement. The earlier file-backed smoke run at revision 0003 created 13 application tables. |
@@ -25,6 +25,7 @@ Date: 2026-11-07
 | PDF export | Pass (SQLite) | Tests extract the generated PDF and verify stored score/category/findings/provenance, unavailable provider status, failed-agent audit, limitations, recommendations, and local report/evidence timestamps. Owner and admin downloads pass; outsider gets 404. Rendered output was visually inspected. |
 | Admin analytics | Pass (SQLite) | Database-backed user/role counts, investigation days, category/risk distribution, provider/agent failures, mean summed agent duration, and feedback counts are verified from seeded rows. Regular users receive 403. CLI tests verify interactive password hashing and refusal after an admin exists. Vitest verifies admin rendering/navigation and a denied regular-user page. |
 | E2E/Playwright | Not verified | Browser automation and wider end-to-end flows are not implemented |
+| Signal-family detector coverage v2 | Pass | Focused detector/workflow suite: 50 passed. Full backend: 205 passed in 17.62s. Frontend: 22 passed across 4 files. The three reported prize/courier false negatives now match named families and score High; tests verify two signals = Moderate and three = High, 15 prize/courier lookalikes plus five bill/bank/OTP examples stay Low and uncategorized, and report findings expose the matched families. Frozen evaluation CSV/split was unchanged. See `signal-families.md`. |
 
 ## Backend test coverage
 

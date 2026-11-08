@@ -31,6 +31,21 @@ def test_non_conversation_marks_conversation_stage_skipped():
     assert run["status"] == "skipped"
 
 
+def test_report_lists_named_signal_families_for_detected_prize_scam():
+    report = investigate(
+        "URGENT this is our 2nd attempt. Your £900 prize is waiting. To claim CALL NOW",
+        "text",
+    )
+
+    signal_details = [item["detail"] for item in report["findings"] if item.get("indicator", "").startswith("signal:")]
+    assert report["category"] == "lottery_fraud"
+    assert report["risk_level"] == "High"
+    assert any("prize or winnings claim" in detail for detail in signal_details)
+    assert any("claim or collection request" in detail for detail in signal_details)
+    assert any("urgent call request" in detail for detail in signal_details)
+    assert any("Combined signals (" in item["detail"] for item in report["findings"])
+
+
 def test_threat_intel_timeout_is_audited_without_aborting_graph(monkeypatch):
     from app.agents import workflow
     monkeypatch.setattr(workflow, "check_url_reputation", lambda _url: [
