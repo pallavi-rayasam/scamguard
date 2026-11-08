@@ -1,4 +1,5 @@
 from pathlib import Path
+import socket
 import sys
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,15 @@ if str(ROOT) not in sys.path:
 
 from url_scanner import analysis, intel, main  # noqa: E402
 from url_scanner.ssrf_guard import FetchUnavailable, SafeFetchResult, SSRFBlocked  # noqa: E402
+
+
+def clear_scanner_rate_limit_events():
+    layer = main.app.middleware_stack
+    while layer is not None:
+        if isinstance(layer, main.ScannerRateLimitMiddleware):
+            layer._events.clear()
+            return
+        layer = getattr(layer, "app", None)
 
 
 def test_url_analysis_flags_http_shortener_punycode_and_seeded_typos():
@@ -201,6 +211,57 @@ def test_dns_failure_is_unavailable_and_skips_provider_lookups(monkeypatch):
     assert all(item["status"] == "unavailable" for item in result["threat_intel_results"])
 
 
+def test_analyze_endpoint_accepts_legitimate_multi_address_dns(monkeypatch):
+    addresses = [
+        "8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9",
+        "149.112.112.112", "93.184.216.34", "208.67.222.222", "208.67.220.220",
+    ]
+    records = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, 443))
+        for address in addresses
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda hostname, port, type: records)
+    monkeypatch.setattr(
+        main,
+        "safe_fetch",
+        lambda _url, method, **kwargs: SafeFetchResult(
+            "completed", "https://many-addresses.example", 200, "text/html", 0, False, 0
+        ),
+    )
+
+    with TestClient(main.app) as client:
+        response = client.post("/analyze", json={"url": "https://many-addresses.example/"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["origin"] == "https://many-addresses.example"
+
+
+def test_analyze_endpoint_blocks_mixed_public_private_dns_answers(monkeypatch):
+    addresses = [
+        "8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9",
+        "149.112.112.112", "93.184.216.34", "208.67.222.222", "208.67.220.220",
+        "169.254.169.254",
+    ]
+    records = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, 443))
+        for address in addresses
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda hostname, port, type: records)
+    monkeypatch.setattr(
+        main,
+        "safe_fetch",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("blocked DNS target must not be fetched")),
+    )
+
+    with TestClient(main.app) as client:
+        response = client.post("/analyze", json={"url": "https://mixed-addresses.example/"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["reason"] == "dns_returned_non_public_address"
+
+
 def test_scanner_blocks_private_targets_without_calling_reputation(monkeypatch):
     monkeypatch.setattr(main, "check_reputation", lambda _: (_ for _ in ()).throw(AssertionError("must not query reputation")))
 
@@ -317,6 +378,65 @@ def test_reputation_endpoint_revalidates_before_provider_lookup(monkeypatch):
     assert queried == [target.origin]
     assert result["status"] == "completed"
     assert result["threat_intel_results"][0]["status"] == "unavailable"
+
+
+def test_reputation_endpoint_accepts_public_ipv4_with_ipv6_unspecified_answer(monkeypatch):
+    records = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("20.193.173.92", 80)),
+        (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("::", 80, 0, 0)),
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda hostname, port, type: records)
+    monkeypatch.setattr(main, "check_reputation", lambda origin: [
+        {"provider": "google_safe_browsing", "status": "completed", "is_malicious": False, "reason": "no_known_threat"},
+    ])
+
+    with TestClient(main.app) as client:
+        clear_scanner_rate_limit_events()
+        response = client.post("/reputation", json={"url": "http://testsafebrowsing.appspot.com/"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["origin"] == "http://testsafebrowsing.appspot.com"
+    assert response.json()["threat_intel_results"][0]["status"] == "completed"
+
+
+def test_reputation_endpoint_rejects_only_ipv6_unspecified_answer(monkeypatch):
+    records = [(socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("::", 80, 0, 0))]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda hostname, port, type: records)
+    monkeypatch.setattr(
+        main,
+        "check_reputation",
+        lambda _origin: (_ for _ in ()).throw(AssertionError("no usable public DNS address must not be queried")),
+    )
+
+    with TestClient(main.app) as client:
+        clear_scanner_rate_limit_events()
+        response = client.post("/reputation", json={"url": "http://unspecified-only.example/"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["reason"] == "dns_no_usable_addresses"
+
+
+def test_reputation_endpoint_blocks_public_private_dns_mix(monkeypatch):
+    records = [
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("20.193.173.92", 80)),
+        (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.168.1.20", 80)),
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda hostname, port, type: records)
+    monkeypatch.setattr(
+        main,
+        "check_reputation",
+        lambda _origin: (_ for _ in ()).throw(AssertionError("mixed DNS answers must not reach providers")),
+    )
+
+    with TestClient(main.app) as client:
+        clear_scanner_rate_limit_events()
+        response = client.post("/reputation", json={"url": "http://mixed-public-private.example/"})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "blocked"
+    assert response.json()["reason"] == "dns_returned_non_public_address"
 
 
 def test_reputation_endpoint_blocks_private_target_before_provider_lookup(monkeypatch):

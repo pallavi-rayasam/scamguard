@@ -1,3 +1,4 @@
+import ipaddress
 from io import BytesIO
 from pathlib import Path
 import socket
@@ -11,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from url_scanner.ssrf_guard import (  # noqa: E402
     MAX_BODY_BYTES,
+    MAX_DNS_ADDRESSES,
     FetchUnavailable,
     SSRFBlocked,
     safe_fetch,
@@ -68,6 +70,65 @@ def test_dns_rebinding_attack_with_public_and_private_answers_is_blocked(monkeyp
     monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: [dns_record("93.184.216.34", port), dns_record("192.168.1.20", port)])
     with pytest.raises(SSRFBlocked, match="dns_returned_non_public_address"):
         validate_target("https://mixed.example/")
+
+
+def test_public_ipv4_with_ipv6_unspecified_dns_answer_is_accepted(monkeypatch):
+    records = [dns_record("20.193.173.92", 80), dns_record("::", 80)]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: records)
+
+    target = validate_target("http://testsafebrowsing.appspot.com/")
+
+    assert target.addresses == ("20.193.173.92",)
+
+
+def test_public_ipv4_and_private_ipv4_are_still_rejected_with_unspecified_answer(monkeypatch):
+    records = [
+        dns_record("20.193.173.92", 80),
+        dns_record("::", 80),
+        dns_record("192.168.1.20", 80),
+    ]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: records)
+
+    with pytest.raises(SSRFBlocked, match="dns_returned_non_public_address"):
+        validate_target("http://mixed-public-private.example/")
+
+
+def test_only_ipv6_unspecified_dns_answer_is_rejected(monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: [dns_record("::", 80)])
+
+    with pytest.raises(SSRFBlocked, match="dns_no_usable_addresses"):
+        validate_target("http://unspecified-only.example/")
+
+
+def test_legitimate_multi_address_dns_is_accepted_with_bounded_pinned_candidates(monkeypatch):
+    public_addresses = [f"1.1.1.{index}" for index in range(1, 34)]
+    records = [dns_record(address, 443) for address in public_addresses]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: records)
+
+    target = validate_target("https://www.google.com/")
+
+    assert len(public_addresses) > MAX_DNS_ADDRESSES
+    assert target.addresses == tuple(sorted(public_addresses)[:MAX_DNS_ADDRESSES])
+    assert len(target.addresses) == MAX_DNS_ADDRESSES
+
+
+def test_dns_rebinding_attack_with_private_answer_beyond_candidate_cap_is_blocked(monkeypatch):
+    public_addresses = [f"1.1.1.{index}" for index in range(1, 34)]
+    records = [dns_record(address, 443) for address in public_addresses]
+    records.append(dns_record("169.254.169.254", 443))
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: records)
+
+    with pytest.raises(SSRFBlocked, match="dns_returned_non_public_address"):
+        validate_target("https://mixed-after-cap.example/")
+
+
+def test_excessive_dns_answer_set_is_still_rejected(monkeypatch):
+    addresses = [str(ipaddress.IPv4Address("93.184.216.1") + index) for index in range(65)]
+    records = [dns_record(address, 443) for address in addresses]
+    monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, type: records)
+
+    with pytest.raises(SSRFBlocked, match="too_many_dns_addresses"):
+        validate_target("https://excessive-addresses.example/")
 
 
 def test_dns_rebinding_attack_resolving_to_loopback_is_blocked(monkeypatch):

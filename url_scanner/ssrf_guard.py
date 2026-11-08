@@ -19,7 +19,11 @@ from urllib.parse import quote, urljoin, urlsplit
 MAX_BODY_BYTES = 64 * 1024
 MAX_REDIRECTS = 3
 MAX_URL_LENGTH = 4096
-MAX_DNS_ADDRESSES = 8
+# Keep the pinned candidate set small, but accept normal CDN/large-provider
+# answers with more than eight unique public IPs. Validate all answers before
+# selecting candidates so a private address cannot be hidden beyond the cap.
+MAX_DNS_ADDRESSES = 32
+MAX_DNS_ANSWER_ADDRESSES = 64
 DEFAULT_TIMEOUT_SECONDS = 4.0
 REDIRECT_CODES = {301, 302, 303, 307, 308}
 METADATA_NETWORKS = tuple(ipaddress.ip_network(value) for value in (
@@ -131,13 +135,20 @@ def _resolve_public_addresses(hostname: str, port: int) -> tuple[str, ...]:
     addresses = sorted({record[4][0].split("%", 1)[0] for record in records})
     if not addresses:
         raise FetchUnavailable("dns_no_addresses")
-    if len(addresses) > MAX_DNS_ADDRESSES:
+    # Some resolver stacks include IPv6 unspecified (::) alongside real IPv4
+    # answers. It is not a connectable destination, so ignore only this value;
+    # every other answer is still checked below and must be globally routable.
+    addresses = [address for address in addresses if address != "::"]
+    if not addresses:
+        raise SSRFBlocked("dns_no_usable_addresses")
+    if len(addresses) > MAX_DNS_ANSWER_ADDRESSES:
         raise SSRFBlocked("too_many_dns_addresses")
     # Fail closed if even one A/AAAA answer is private. This also blocks mixed
-    # public/private DNS responses that could otherwise enable rebinding.
+    # public/private DNS responses that could otherwise enable rebinding. This
+    # check intentionally runs before truncating the public candidate list.
     if any(not _is_public(address) for address in addresses):
         raise SSRFBlocked("dns_returned_non_public_address")
-    return tuple(addresses)
+    return tuple(addresses[:MAX_DNS_ADDRESSES])
 
 
 def validate_target(url: str) -> ValidatedTarget:
