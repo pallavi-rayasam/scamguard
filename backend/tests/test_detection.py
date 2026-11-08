@@ -77,6 +77,8 @@ def test_signal_family_scam_regressions_are_categorized_and_explain_signals(name
 
     assert result["category"] == category
     assert signals <= set(result["matched_signals"])
+    if category == "loan_scam":
+        assert "upfront_job_fee" not in result["matched_signals"]
     assert score >= 50
     assert level == "High"
     assert any(f"Combined signals" in item["detail"] for item in result["findings"])
@@ -85,7 +87,7 @@ def test_signal_family_scam_regressions_are_categorized_and_explain_signals(name
 @pytest.mark.parametrize(
     "message,expected_level,expected_score",
     [
-        ("Prize winner: claim your reward, CALL NOW.", "Moderate", 25),
+        ("Prize winner: claim your reward, CALL NOW.", "Moderate", 30),
         ("Prize winner: claim your reward, CALL NOW, use the link to collect.", "High", 50),
     ],
     ids=["two-strong-signals-moderate", "three-strong-signals-high"],
@@ -146,10 +148,10 @@ def test_kyc_phishing_regression_explains_each_score_contribution():
     assert result["category"] == "fake_kyc"
     assert {"kyc_verification", "account_restriction", "verify_link", "bank_government_claim", "unverified_domain", "urgency"} <= set(result["matched_signals"])
     assert weights["urgent_threat"] == 18
-    assert weights["signal_combination:fake_kyc"] == 25
-    assert weights["unverified_domain_urgency"] == 8
+    assert weights["signal_combination:fake_kyc"] == 30
+    assert weights["unverified_domain_urgency"] == 0
     assert weights["unverified_bank_domain"] == 8
-    assert score == 59
+    assert score == 56
     assert level in {"Moderate", "High"}
 
 
@@ -159,6 +161,16 @@ def test_kyc_restriction_and_link_alone_reach_moderate():
 
     assert result["category"] == "fake_kyc"
     assert score >= 25
+    assert level == "Moderate"
+
+
+def test_unverified_domain_and_urgency_combo_has_a_thirty_point_floor():
+    result = classify_message("Urgent: check abcd.com today for your delivery update.")
+    score, level, scored_findings = score_findings(result["findings"])
+
+    assert {"unverified_domain", "urgency"} <= set(result["matched_signals"])
+    assert next(item for item in scored_findings if item["indicator"] == "unverified_domain_urgency")["score_weight"] == 30
+    assert score == 30
     assert level == "Moderate"
 
 
@@ -188,6 +200,81 @@ KYC_LEGITIMATE_LOOKALIKES = [
 
 @pytest.mark.parametrize("message", KYC_LEGITIMATE_LOOKALIKES)
 def test_genuine_kyc_and_bank_lookalikes_remain_low(message):
+    result = classify_message(message)
+    score, level, _ = score_findings(result["findings"])
+
+    assert level == "Low", (message, score, result["findings"])
+    assert result["category"] is None, (message, result["findings"])
+
+
+ADDITIONAL_SCAM_REGRESSIONS = [
+    pytest.param(
+        "This is an urgent notice from the cyber investigation department. Your identity has been linked to a criminal case. Stay on this call and follow our instructions or a warrant will be issued.",
+        "digital_arrest",
+        {"authority_investigation", "criminal_case_claim", "stay_on_call", "warrant_threat"},
+        id="cyber-investigation-stay-on-call-warrant",
+    ),
+    pytest.param(
+        "Congratulations! You have been shortlisted for a work-from-home position with a salary of Rs. 45,000 per month. Pay a refundable registration fee of Rs. 1,499 today to confirm your offer.",
+        "job_fraud",
+        {"job_offer", "salary_offer", "upfront_job_fee", "pay_penalty_fee"},
+        id="shortlisted-work-from-home-refundable-fee",
+    ),
+    pytest.param(
+        "Your electricity connection will be disconnected tonight because of an unpaid bill. Call 1234567895 immediately and complete the payment to prevent disconnection.",
+        "electricity_bill_scam",
+        {"utility_service", "utility_disconnection", "call_now", "pay_penalty_fee", "urgency"},
+        id="electricity-disconnection-call-payment",
+    ),
+    pytest.param(
+        "You are pre-approved for an instant loan without documents. Install SmartWQ, allow access to your contacts, photos, and messages, and pay a processing charge to release the amount.",
+        "loan_scam",
+        {"loan_offer", "loan_app_install", "sensitive_app_permissions", "loan_processing_charge", "pay_penalty_fee"},
+        id="preapproved-loan-app-invasive-permissions-charge",
+    ),
+]
+
+
+@pytest.mark.parametrize("message,category,signals", ADDITIONAL_SCAM_REGRESSIONS)
+def test_additional_scam_families_trigger_a_strong_combination(message, category, signals):
+    result = classify_message(message)
+    score, level, scored_findings = score_findings(result["findings"])
+
+    assert result["category"] == category
+    assert signals <= set(result["matched_signals"])
+    assert score >= 30
+    assert level in {"Moderate", "High"}
+    assert any(item["indicator"] == f"signal_combination:{category}" for item in scored_findings)
+
+
+ADDITIONAL_LEGITIMATE_LOOKALIKES = [
+    pytest.param("Police-station notice: submit a copy of the FIR at reception by appointment. No payment or phone call is required.", id="police-station-fir-filing"),
+    pytest.param("Your police complaint has been recorded. Visit the station desk during public hours; official updates are posted at reception.", id="police-complaint-receipt"),
+    pytest.param("A warrant was served through the court; bring identification to the listed hearing. No payment or call is requested.", id="court-warrant-hearing-notice"),
+    pytest.param("The cyber investigation department posted its office hours and case lookup instructions. Visit the office for assistance.", id="cyber-office-hours"),
+    pytest.param("Police station public notice: file copies are available at the front desk. Report concerns in person; no payment is due.", id="police-station-document-collection"),
+    pytest.param("Shortlisted for a position with a salary of Rs. 45,000 per month. The written offer is attached; no registration or training fee is charged.", id="genuine-shortlist-no-fee"),
+    pytest.param("Your work-from-home interview is scheduled for Friday. The salary range is in the role description; no payment is required at any stage.", id="genuine-work-from-home-interview"),
+    pytest.param("Official job offer: annual salary and start date are listed in the signed letter. Payroll onboarding begins after hiring; no refundable deposit is requested.", id="signed-job-offer-no-deposit"),
+    pytest.param("Shortlisted candidate: please attend an interview to discuss the monthly salary and benefits. There is no application fee.", id="interview-and-salary-no-fee"),
+    pytest.param("The employer confirms your selection, monthly pay, and start date. No application, registration, training fee, or refundable deposit is charged.", id="employer-selection-no-upfront-fee"),
+    pytest.param("Your electricity bill is due today. Pay through the utility's official app; service will not be disconnected before the due date.", id="utility-bill-due-no-disconnection-threat"),
+    pytest.param("Gas bill reminder: please pay by the date on your statement in the official app. Your service continues normally.", id="gas-bill-reminder"),
+    pytest.param("Water account statement is ready. Payment has been received and no disconnection is planned.", id="water-payment-received"),
+    pytest.param("Electricity meter reading is scheduled for next week. No bill is due yet and service remains active.", id="electricity-meter-reading"),
+    pytest.param("Autopay confirmation: your electricity payment was processed. We will not disconnect service; view the receipt in the utility app.", id="utility-autopay-confirmed"),
+    pytest.param("A pre-approved personal loan offer is available in the bank app. Review the terms; no fee is requested and no extra app needs to be installed.", id="bank-preapproved-loan-no-fee"),
+    pytest.param("Official loan app notice: the app never requests access to contacts, photos, or messages. Review your application in the bank's established app.", id="official-loan-app-permission-notice"),
+    pytest.param("Your instant loan application is under review; check status in the official app. No document-access permission or processing fee is needed.", id="loan-status-no-permission-fee"),
+    pytest.param("Install the official bank app for statements. It does not request contact or message permissions; your existing loan account is unchanged.", id="bank-app-install-no-invasive-permission"),
+    pytest.param("Pre-approved loan status: your bank has approved the application. Accept in its established app; no processing or release fee is charged.", id="loan-approved-official-app-no-release-fee"),
+    pytest.param("Reminder: your bank account statement is ready. View it in the official app; no call, payment, or access change is required.", id="bank-statement-reminder"),
+    pytest.param("Utility notice: your electricity account remains active. The bill and due date are available in the official customer portal.", id="electricity-account-active"),
+]
+
+
+@pytest.mark.parametrize("message", ADDITIONAL_LEGITIMATE_LOOKALIKES)
+def test_additional_genuine_lookalikes_remain_low_and_uncategorized(message):
     result = classify_message(message)
     score, level, _ = score_findings(result["findings"])
 

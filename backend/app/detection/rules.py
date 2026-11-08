@@ -45,6 +45,19 @@ FAMILY_NAMES = {
     "verify_link": "verification or update requested through a link",
     "bank_government_claim": "bank or government identity claim",
     "unverified_domain": "domain not in the trusted-domain list",
+    "authority_investigation": "police or cyber-investigation authority claim",
+    "criminal_case_claim": "criminal case or investigation allegation",
+    "warrant_threat": "warrant or arrest threat",
+    "stay_on_call": "instruction to remain on a call",
+    "job_offer": "job or work-from-home offer",
+    "salary_offer": "salary or monthly pay promise",
+    "upfront_job_fee": "registration, training, or refundable job fee",
+    "utility_service": "electricity, water, gas, or utility service",
+    "utility_disconnection": "utility disconnection threat",
+    "loan_offer": "pre-approved or instant loan offer",
+    "loan_app_install": "instruction to install a loan app",
+    "sensitive_app_permissions": "request for contacts, photos, or messages access",
+    "loan_processing_charge": "loan processing or release charge",
 }
 
 # These are explicitly contextual combinations. Context words alone never add
@@ -56,7 +69,7 @@ SIGNAL_PATTERNS = {
     "prize_won": re.compile(r"\b(?:prize|won|winnings?|jackpot|reward)\b", re.I),
     "claim_collect": re.compile(r"\b(?:claim|collect(?:ion|ed|ing)?|release)\b", re.I),
     "pay_penalty_fee": re.compile(r"\b(?:pay(?:ment|able)?|fees?|penalt(?:y|ies)|clearance|charges?)\b", re.I),
-    "call_now": re.compile(r"\b(?:call|phone)\s+(?:me\s+)?(?:now|immediately|right away)\b|\b(?:call|phone)\s+now\b", re.I),
+    "call_now": re.compile(r"\b(?:call|phone)\s+(?:(?:\+?\d[\d -]{5,15}|(?:me|us|the number|this number|our helpline))\s+)?(?:now|immediately|right away)\b|\b(?:call|phone)\s+now\b", re.I),
     "urgency": re.compile(r"\b(?:urgent(?:ly)?|immediately|right now|today|do not delay|don't delay|final (?:notice|warning|attempt)|(?:second|2nd|third|3rd) attempt|\d+(?:st|nd|rd|th) attempt|within \d+ (?:minutes?|hours?|days?))\b", re.I),
     "off_platform_link": re.compile(r"\b(?:at|via|through|use|click|open|visit)\s+(?:the\s+)?link\b|\b(?:link|url)\s+(?:below|to|for)\b|https?://|\bwww\.", re.I),
     "coercive_threat": re.compile(r"\b(?:arrest(?:ed)?|jail|prosecut(?:e|ion)|face charges|legal action|police will)\b", re.I),
@@ -64,14 +77,32 @@ SIGNAL_PATTERNS = {
     "account_restriction": re.compile(r"\b(?:restrict(?:ed|ion)?|suspend(?:ed|sion)?|block(?:ed|ing)?|freeze|frozen|access limited)\b", re.I),
     "verify_link": re.compile(r"\b(?:verify|update|confirm|complete)\b.{0,55}\b(?:via|through|using|at|on)\s+(?:(?:the|this|a|an)\s+)?(?:web\s+)?(?:link|url)\b|\b(?:link|url)\b.{0,35}\b(?:to\s+(?:verify|update|confirm)|for\s+(?:verification|kyc|account update))\b", re.I),
     "bank_government_claim": re.compile(r"\b(?:bank|banking|rbi|uidai|government|income tax department|tax department)\b", re.I),
+    "authority_investigation": re.compile(r"\b(?:cyber investigation department|cyber crime department|cybercrime department|investigation department|investigation officer|cyber cell|police|law enforcement)\b", re.I),
+    "criminal_case_claim": re.compile(r"\b(?:criminal case|criminal complaint|under investigation|identity.{0,25}linked to.{0,30}(?:case|crime)|linked to.{0,20}(?:criminal case|crime))\b", re.I),
+    "warrant_threat": re.compile(r"\b(?:warrant(?: will be issued| has been issued)?|issue an arrest warrant|arrest warrant)\b", re.I),
+    "stay_on_call": re.compile(r"\b(?:stay|remain|keep|continue)\s+(?:on|in)\s+(?:this\s+)?(?:call|line)\b|\bdo not hang up\b", re.I),
+    "job_offer": re.compile(r"\b(?:job offer|work[- ]from[- ]home|position|shortlisted|vacancy|employment)\b", re.I),
+    "salary_offer": re.compile(r"\b(?:salary|per month|monthly pay|monthly salary|remuneration)\b", re.I),
+    "upfront_job_fee": re.compile(r"\b(?:registration|application|training|security)\s+(?:fee|charge|deposit)\b|\brefundable\b.{0,35}\b(?:fee|charge|deposit)\b|\b(?:upfront|advance)\s+(?:fee|charge|deposit)\b", re.I),
+    "utility_service": re.compile(r"\b(?:electricity|power|water|gas|utility)\b", re.I),
+    "utility_disconnection": re.compile(r"\b(?:disconnect(?:ed|ion)?|power will be cut|service will be shut off|connection will be discontinued|cut off|shut off)\b", re.I),
+    "loan_offer": re.compile(r"\b(?:pre[- ]approved|preapproved|instant loan|loan offer|loan without documents|personal loan)\b", re.I),
+    "loan_app_install": re.compile(r"\binstall\s+(?:(?:the|an?)\s+)?(?:(?:official|bank|loan|mobile)\s+)?(?:[\w.-]+\s+)?app\b|\binstall\s+[A-Z][A-Za-z0-9_-]{2,}\b", re.I),
+    "sensitive_app_permissions": re.compile(r"\b(?:allow|grant|give|enable|access)\b.{0,40}\b(?:contacts|photos|messages)\b|\b(?:contacts|photos|messages)\b.{0,25}\b(?:permission|access)\b", re.I),
+    "loan_processing_charge": re.compile(r"\b(?:processing|release|disbursal|upfront)\s+(?:fee|charge|payment)\b", re.I),
 }
 
 _PAYMENT_NOT_REQUESTED = re.compile(
     r"\b(?:no|without)\s+(?:any\s+)?(?:payment|fees?|charges?|penalties?)\b|"
+    r"\b(?:no|without)\b(?:\W+\w+){0,4}\W*(?:payment|fees?|charges?|penalties?)\b|"
     r"\bwithout\s+a\s+(?:fee|charge|penalty)\b|"
     r"\b(?:fees?|charges?|penalties?|payment|clearance)\b.{0,35}\b(?:already paid|paid|prepaid|settled|waived|included|covered|not due|not required)\b|"
     r"\b(?:already paid|paid in advance|prepaid|settled|waived|included|covered)\b.{0,35}\b(?:fees?|charges?|penalties?|payment|clearance)\b|"
     r"\b(?:do not|don't|never)\s+pay\b",
+    re.I,
+)
+_NEGATED_SERVICE_THREAT = re.compile(
+    r"\b(?:no|not|never|won't|will not|isn't|is not|remains?|remain)\b.{0,24}\b(?:restrict(?:ed|ion)?|suspend(?:ed|sion)?|block(?:ed|ing)?|disconnect(?:ed|ion)?|cut off|shut off)\b",
     re.I,
 )
 _OTP_ADVICE_BEFORE = re.compile(
@@ -86,11 +117,13 @@ _OTP_ADVICE_AFTER = re.compile(
 )
 
 
-def _active_matches(text: str, pattern: re.Pattern[str], *, payment: bool = False) -> list[str]:
+def _active_matches(text: str, pattern: re.Pattern[str], *, payment: bool = False, service_threat: bool = False) -> list[str]:
     found = []
     for match in pattern.finditer(text):
         local_context = text[max(0, match.start() - 45):min(len(text), match.end() + 45)]
         if payment and _PAYMENT_NOT_REQUESTED.search(local_context):
+            continue
+        if service_threat and _NEGATED_SERVICE_THREAT.search(local_context):
             continue
         found.append(match.group(0))
     return found
@@ -113,6 +146,14 @@ def _unverified_domains(text: str) -> list[str]:
         if host not in unverified:
             unverified.append(host)
     return unverified
+
+
+def _points_to_floor(findings: list[dict], floor: int) -> int:
+    highest_by_indicator: dict[str, int] = {}
+    for finding in findings:
+        indicator = finding.get("indicator", "unknown")
+        highest_by_indicator[indicator] = max(highest_by_indicator.get(indicator, 0), finding.get("score_weight", 0))
+    return max(0, floor - sum(highest_by_indicator.values()))
 
 
 def classify_message(text: str) -> dict:
@@ -141,13 +182,37 @@ def classify_message(text: str) -> dict:
         for family in category_config.get("signal_families", [])
     }
     signal_matches = {
-        name: _active_matches(lowered, pattern, payment=name == "pay_penalty_fee")
+        name: _active_matches(
+            lowered,
+            pattern,
+            payment=name == "pay_penalty_fee",
+            service_threat=name in {"account_restriction", "utility_disconnection"},
+        )
         for name, pattern in SIGNAL_PATTERNS.items()
         if name in configured_families
     }
     if "unverified_domain" in configured_families:
         signal_matches["unverified_domain"] = _unverified_domains(text)
     active_signals = {name for name, matches in signal_matches.items() if matches}
+    global_signals = {"urgency", "unverified_domain", "pay_penalty_fee", "call_now", "off_platform_link"}
+    family_contexts: dict[str, set[str]] = {}
+    contexts: set[str] = set()
+    for category_config in CATEGORIES:
+        combo = category_config.get("signal_combination")
+        if not combo:
+            continue
+        context = combo["context"]
+        contexts.add(context)
+        for family in category_config.get("signal_families", []):
+            family_contexts.setdefault(family, set()).add(context)
+    active_contexts = active_signals.intersection(contexts)
+    active_signals = {
+        signal
+        for signal in active_signals
+        if signal in global_signals
+        or signal in active_contexts
+        or bool(family_contexts.get(signal, set()).intersection(active_contexts))
+    }
     findings = list(matched_indicators)
     for name in sorted(active_signals):
         examples = ", ".join(dict.fromkeys(signal_matches[name][:3]))
@@ -186,7 +251,7 @@ def classify_message(text: str) -> dict:
         if len(strong_signals) < combo.get("minimum_signals", 2):
             continue
         category_hits[category_code] += 1
-        score_weight = 50 if len(strong_signals) >= combo.get("high_signals", 3) else 25
+        score_weight = 50 if len(strong_signals) >= combo.get("high_signals", 3) else 30
         names = ", ".join(FAMILY_NAMES[name] for name in strong_signals)
         findings.append({
             "indicator": f"signal_combination:{category_code}",
@@ -199,10 +264,10 @@ def classify_message(text: str) -> dict:
     if {"unverified_domain", "urgency"} <= active_signals:
         findings.append({
             "indicator": "unverified_domain_urgency",
-            "detail": "An unverified domain appears alongside time pressure.",
+            "detail": "An unverified domain appears alongside time pressure; combined evidence reaches at least 30 points.",
             "verification_level": "heuristic",
             "source": "deterministic_signal_combinations",
-            "score_weight": 8,
+            "score_weight": _points_to_floor(findings, 30),
         })
     if {"unverified_domain", "bank_government_claim"} <= active_signals:
         findings.append({
