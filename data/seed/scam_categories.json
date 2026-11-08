@@ -3,7 +3,7 @@
   {"code":"upi_fraud","name":"UPI fraud","language":"en","patterns":["collect request","scan this qr to receive","enter your upi pin to receive"]},
   {"code":"banking_fraud","name":"Banking fraud","language":"en","patterns":["bank account blocked","bank account suspended","debit card blocked"]},
   {"code":"otp_theft","name":"OTP theft","language":"en","patterns":["share the otp","tell me the otp","send otp"]},
-  {"code":"fake_kyc","name":"Fake KYC","language":"en","patterns":["kyc update","kyc will expire","complete kyc immediately"]},
+  {"code":"fake_kyc","name":"Fake KYC","language":"en","patterns":["kyc update","kyc will expire","complete kyc immediately"],"signal_families":["kyc_verification","account_restriction","verify_link","bank_government_claim","unverified_domain","urgency"],"signal_combination":{"context":"kyc_verification","qualifying_context":["account_restriction"],"strong":["account_restriction","verify_link"],"action_required":["verify_link"],"minimum_signals":2,"high_signals":3}},
   {"code":"job_fraud","name":"Job fraud","language":"en","patterns":["pay registration fee","job offer fee","training fee to confirm job"]},
   {"code":"investment_fraud","name":"Investment fraud","language":"en","patterns":["guaranteed returns","double your money","risk free investment"]},
   {"code":"lottery_fraud","name":"Lottery fraud","language":"en","patterns":[],"signal_families":["prize_won","claim_collect","pay_penalty_fee","call_now","urgency","off_platform_link"],"signal_combination":{"context":"prize_won","strong":["claim_collect","pay_penalty_fee","call_now","urgency","off_platform_link"],"action_required":["pay_penalty_fee","call_now","off_platform_link"],"minimum_signals":2,"high_signals":3}},

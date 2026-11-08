@@ -46,6 +46,20 @@ def test_report_lists_named_signal_families_for_detected_prize_scam():
     assert any("Combined signals (" in item["detail"] for item in report["findings"])
 
 
+def test_kyc_phishing_report_exposes_verification_domain_and_pressure_signals():
+    report = investigate(
+        "Your bank KYC is incomplete and your account will be restricted today. Verify immediately "
+        "through the link below to avoid suspension: abcd.com . Do not delay.",
+        "text",
+    )
+
+    assert report["category"] == "fake_kyc"
+    assert report["risk_level"] in {"Moderate", "High"}
+    assert any(item["indicator"] == "signal:unverified_domain" for item in report["findings"])
+    assert any(item["indicator"] == "signal_combination:fake_kyc" for item in report["findings"])
+    assert any(item["indicator"] == "unverified_bank_domain" for item in report["findings"])
+
+
 def test_threat_intel_timeout_is_audited_without_aborting_graph(monkeypatch):
     from app.agents import workflow
     monkeypatch.setattr(workflow, "check_url_reputation", lambda _url: [

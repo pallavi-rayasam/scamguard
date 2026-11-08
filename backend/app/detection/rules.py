@@ -1,9 +1,11 @@
 import re
 from collections import Counter
+from urllib.parse import urlsplit
 
-from app.detection.normalize import load_categories
+from app.detection.normalize import extract_urls, load_categories, load_trusted_domains
 
 CATEGORIES = load_categories()
+TRUSTED_DOMAINS = load_trusted_domains()
 
 INDICATOR_WEIGHTS = {
     "credential_request": 30,
@@ -38,6 +40,11 @@ FAMILY_NAMES = {
     "urgency": "time pressure or repeated attempt",
     "off_platform_link": "link-based action",
     "coercive_threat": "arrest or legal threat",
+    "kyc_verification": "KYC or account verification request",
+    "account_restriction": "account restriction or suspension threat",
+    "verify_link": "verification or update requested through a link",
+    "bank_government_claim": "bank or government identity claim",
+    "unverified_domain": "domain not in the trusted-domain list",
 }
 
 # These are explicitly contextual combinations. Context words alone never add
@@ -45,14 +52,18 @@ FAMILY_NAMES = {
 SIGNAL_PATTERNS = {
     "authority_customs": re.compile(r"\b(?:customs?|police|law enforcement|border authorities|authorit(?:y|ies))\b", re.I),
     "parcel_courier": re.compile(r"\b(?:parcel|courier|shipment|package|delivery)\b", re.I),
-    "prohibited_illegal": re.compile(r"\b(?:prohibited|illegal|restricted|banned|contraband)\b", re.I),
+    "prohibited_illegal": re.compile(r"\b(?:prohibited|illegal|banned|contraband)\b|\brestricted\s+(?:item|goods|package|substance)\b", re.I),
     "prize_won": re.compile(r"\b(?:prize|won|winnings?|jackpot|reward)\b", re.I),
     "claim_collect": re.compile(r"\b(?:claim|collect(?:ion|ed|ing)?|release)\b", re.I),
     "pay_penalty_fee": re.compile(r"\b(?:pay(?:ment|able)?|fees?|penalt(?:y|ies)|clearance|charges?)\b", re.I),
     "call_now": re.compile(r"\b(?:call|phone)\s+(?:me\s+)?(?:now|immediately|right away)\b|\b(?:call|phone)\s+now\b", re.I),
-    "urgency": re.compile(r"\b(?:urgent(?:ly)?|immediately|right now|final (?:notice|warning|attempt)|(?:second|2nd|third|3rd) attempt|\d+(?:st|nd|rd|th) attempt|within \d+ (?:minutes?|hours?|days?))\b", re.I),
+    "urgency": re.compile(r"\b(?:urgent(?:ly)?|immediately|right now|today|do not delay|don't delay|final (?:notice|warning|attempt)|(?:second|2nd|third|3rd) attempt|\d+(?:st|nd|rd|th) attempt|within \d+ (?:minutes?|hours?|days?))\b", re.I),
     "off_platform_link": re.compile(r"\b(?:at|via|through|use|click|open|visit)\s+(?:the\s+)?link\b|\b(?:link|url)\s+(?:below|to|for)\b|https?://|\bwww\.", re.I),
     "coercive_threat": re.compile(r"\b(?:arrest(?:ed)?|jail|prosecut(?:e|ion)|face charges|legal action|police will)\b", re.I),
+    "kyc_verification": re.compile(r"\b(?:kyc|know your customer|identity verification|customer verification|verify your account|verify account|account verification)\b", re.I),
+    "account_restriction": re.compile(r"\b(?:restrict(?:ed|ion)?|suspend(?:ed|sion)?|block(?:ed|ing)?|freeze|frozen|access limited)\b", re.I),
+    "verify_link": re.compile(r"\b(?:verify|update|confirm|complete)\b.{0,55}\b(?:via|through|using|at|on)\s+(?:(?:the|this|a|an)\s+)?(?:web\s+)?(?:link|url)\b|\b(?:link|url)\b.{0,35}\b(?:to\s+(?:verify|update|confirm)|for\s+(?:verification|kyc|account update))\b", re.I),
+    "bank_government_claim": re.compile(r"\b(?:bank|banking|rbi|uidai|government|income tax department|tax department)\b", re.I),
 }
 
 _PAYMENT_NOT_REQUESTED = re.compile(
@@ -91,6 +102,19 @@ def _advisory_negated(text: str, start: int, end: int) -> bool:
     return bool(_OTP_ADVICE_BEFORE.search(context) or _OTP_ADVICE_AFTER.search(after))
 
 
+def _unverified_domains(text: str) -> list[str]:
+    unverified = []
+    for url in extract_urls(text):
+        host = (urlsplit(url).hostname or "").lower().rstrip(".")
+        if not host:
+            continue
+        if any(host == trusted or host.endswith("." + trusted) for trusted in TRUSTED_DOMAINS):
+            continue
+        if host not in unverified:
+            unverified.append(host)
+    return unverified
+
+
 def classify_message(text: str) -> dict:
     lowered = text.lower()
     matched_indicators = []
@@ -121,6 +145,8 @@ def classify_message(text: str) -> dict:
         for name, pattern in SIGNAL_PATTERNS.items()
         if name in configured_families
     }
+    if "unverified_domain" in configured_families:
+        signal_matches["unverified_domain"] = _unverified_domains(text)
     active_signals = {name for name, matches in signal_matches.items() if matches}
     findings = list(matched_indicators)
     for name in sorted(active_signals):
@@ -168,6 +194,23 @@ def classify_message(text: str) -> dict:
             "verification_level": "heuristic",
             "source": "deterministic_signal_combinations",
             "score_weight": score_weight,
+        })
+
+    if {"unverified_domain", "urgency"} <= active_signals:
+        findings.append({
+            "indicator": "unverified_domain_urgency",
+            "detail": "An unverified domain appears alongside time pressure.",
+            "verification_level": "heuristic",
+            "source": "deterministic_signal_combinations",
+            "score_weight": 8,
+        })
+    if {"unverified_domain", "bank_government_claim"} <= active_signals:
+        findings.append({
+            "indicator": "unverified_bank_domain",
+            "detail": "A bank or government identity is claimed alongside a domain not in the trusted-domain list.",
+            "verification_level": "heuristic",
+            "source": "deterministic_signal_combinations",
+            "score_weight": 8,
         })
 
     for code, count in category_hits.items():
