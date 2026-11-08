@@ -24,6 +24,16 @@ def test_classification_uses_seeded_indian_scam_patterns():
     assert result["findings"]
 
 
+def test_seeded_phishing_pattern_keeps_its_weight_without_a_signal_combination():
+    result = classify_message("Your account is suspended. Verify now at https://example.in")
+    score, level, scored = score_findings(result["findings"])
+
+    assert result["category"] == "phishing"
+    assert score == 8
+    assert level == "Low"
+    assert next(item for item in scored if item["indicator"] == "category:phishing")["score_weight"] == 8
+
+
 def test_classification_leaves_unmatched_harmless_text_uncategorized():
     result = classify_message("Hi, are we meeting at 5pm?")
     assert result["category"] is None
@@ -275,6 +285,133 @@ ADDITIONAL_LEGITIMATE_LOOKALIKES = [
 
 @pytest.mark.parametrize("message", ADDITIONAL_LEGITIMATE_LOOKALIKES)
 def test_additional_genuine_lookalikes_remain_low_and_uncategorized(message):
+    result = classify_message(message)
+    score, level, _ = score_findings(result["findings"])
+
+    assert level == "Low", (message, score, result["findings"])
+    assert result["category"] is None, (message, result["findings"])
+
+
+V4_SCAM_REGRESSIONS = [
+    pytest.param(
+        "I have been thinking about you since we met online. I need a small amount urgently to pay a hospital deposit. Please send it now and I promise to return it tomorrow.",
+        {"romance_scam"},
+        {"online_relationship_money_request"},
+        id="urgent-money-from-online-acquaintance",
+    ),
+    pytest.param(
+        "Your digital asset account can earn a guaranteed 18% daily return through our private crypto pool. Send coins to the wallet below to activate your membership: [FAKE-WALLET].",
+        {"investment_fraud", "crypto_scam"},
+        {"guaranteed_return_claim", "wallet_payment_to_unlock"},
+        id="guaranteed-daily-return-wallet-activation-placeholder",
+    ),
+    pytest.param(
+        "Your internet banking access has been temporarily blocked. Call our customer-care desk at [FAKE-NUMBER] and install the remote support app so we can restore access.",
+        {"fake_customer_support"},
+        {"remote_support_app_install"},
+        id="blocked-banking-remote-support-placeholder",
+    ),
+    pytest.param(
+        "Government benefit update: You are eligible for a Rs. 12,000 assistance payment. Submit your Aadhaar and bank details through fake.com before the application window closes.",
+        {"phishing"},
+        {"credential_data_request", "unverified_domain"},
+        id="government-benefit-aadhaar-bank-details-link",
+    ),
+    pytest.param(
+        "Your electricity subsidy refund is waiting. Click scam.com and enter your card details to receive the amount directly into your account.",
+        {"phishing"},
+        {"credential_data_request", "unverified_domain"},
+        id="subsidy-refund-card-details-link",
+    ),
+    pytest.param(
+        "We are recruiting part-time product reviewers. Earn Rs. 3,000 per day by rating products. First, pay a refundable onboarding deposit of Rs. 799 to unlock your tasks.",
+        {"job_fraud"},
+        {"job_offer", "upfront_benefit_fee"},
+        id="product-reviewer-refundable-deposit",
+    ),
+    pytest.param(
+        "Your parcel is held at the local sorting centre because the address is incomplete. Send your full address, date of birth, and payment details by replying to this message.",
+        {"phishing"},
+        {"credential_data_request", "parcel_courier"},
+        id="parcel-reply-requests-sensitive-details",
+    ),
+]
+
+
+@pytest.mark.parametrize("message,categories,signals", V4_SCAM_REGRESSIONS)
+def test_v4_single_high_risk_family_regressions(message, categories, signals):
+    result = classify_message(message)
+    score, level, _ = score_findings(result["findings"])
+
+    assert result["category"] in categories
+    assert signals <= set(result["matched_signals"])
+    assert score >= 30
+    assert level in {"Moderate", "High"}
+
+
+SINGLE_HIGH_RISK_FAMILIES = [
+    pytest.param("Please submit your Aadhaar number by replying to this SMS.", "phishing", "credential_data_request", id="single-sensitive-data-request"),
+    pytest.param("Our support desk requires you to install the remote access app to continue.", "fake_customer_support", "remote_support_app_install", id="single-remote-support-install"),
+    pytest.param("Send coins to the crypto wallet below to unlock the transfer status.", "crypto_scam", "wallet_payment_to_unlock", id="single-wallet-activation-payment"),
+    pytest.param("Send the payment to the UPI ID below to activate my refund.", "upi_fraud", "upi_payment_to_receive", id="single-upi-payment-to-receive"),
+    pytest.param("Guaranteed 18% daily returns are available in this private pool.", "investment_fraud", "guaranteed_return_claim", id="single-guaranteed-daily-return"),
+    pytest.param("For this work-from-home job, pay a refundable onboarding deposit to unlock tasks.", "job_fraud", "upfront_benefit_fee", id="single-refundable-job-deposit"),
+    pytest.param("We met online last month. Please send me money urgently for a hospital deposit.", "romance_scam", "online_relationship_money_request", id="single-online-relationship-money-request"),
+]
+
+
+@pytest.mark.parametrize("message,category,signal", SINGLE_HIGH_RISK_FAMILIES)
+def test_each_new_high_risk_family_alone_scores_moderate_or_higher(message, category, signal):
+    result = classify_message(message)
+    score, level, _ = score_findings(result["findings"])
+
+    assert result["category"] == category
+    assert signal in result["matched_signals"]
+    assert score >= 30
+    assert level in {"Moderate", "High"}
+
+
+V4_GENUINE_LOOKALIKES = [
+    pytest.param("Bank security notice: never share your card details or PIN by text; the bank will never ask you to send them.", id="data-bank-never-share-card-pin"),
+    pytest.param("Your bank app displays your card ending in 4821. CVV and PIN are not needed for account alerts.", id="data-bank-card-alert-no-secret-request"),
+    pytest.param("The official government portal explains how benefit applications work; check eligibility there and do not reply with personal details.", id="data-benefit-information-only"),
+    pytest.param("Your salary account and mailing address are already on file. Contact the branch in person if either has changed.", id="data-account-details-already-on-file"),
+    pytest.param("Never enter a password, card number, or Aadhaar number in response to an unsolicited message.", id="data-security-advisory"),
+    pytest.param("A genuine app update is available in the official app store. Review the release notes and update when convenient.", id="remote-official-app-update"),
+    pytest.param("Your bank mobile app has a new version. Update it from the bank's official store listing.", id="remote-bank-app-version"),
+    pytest.param("The video meeting app update fixes a camera issue; install the update from its verified publisher page.", id="remote-video-app-update"),
+    pytest.param("Company IT notice: the desktop client has a security patch. Existing users can update it from the managed software center.", id="remote-managed-client-patch"),
+    pytest.param("Never install remote-control software at the request of an unsolicited caller. Contact the help desk through the company portal.", id="remote-security-warning"),
+    pytest.param("UPI refund processed automatically to the original account. No payment or wallet transfer is needed to receive it.", id="wallet-automatic-upi-refund"),
+    pytest.param("Move your own crypto from the exchange to your hardware wallet for safekeeping; no activation payment or return is promised.", id="wallet-own-assets-cold-storage"),
+    pytest.param("Merchant payment received by UPI for your grocery order. The receipt is in the official shopping app.", id="wallet-normal-merchant-upi-payment"),
+    pytest.param("The bank's rewards balance can be viewed in the official app. You do not need to send coins or funds to unlock it.", id="wallet-rewards-no-transfer"),
+    pytest.param("Never send crypto to a wallet to unlock a refund; official refunds do not require a second transfer.", id="wallet-fraud-warning"),
+    pytest.param("Pay the electricity vendor through the UPI ID printed on the official bill; this payment is for the current service invoice.", id="upi-normal-bill-payment"),
+    pytest.param("Your UPI transfer to the school fee account was completed. The receipt is available in your bank app.", id="upi-completed-school-fee"),
+    pytest.param("Do not send money to receive a refund. Your bank will credit eligible reversals automatically.", id="upi-refund-security-notice"),
+    pytest.param("A verified merchant can show its UPI QR at checkout for a purchase. It is not a request to activate a wallet.", id="upi-normal-merchant-checkout"),
+    pytest.param("Bank transfer alert: payment to your saved UPI contact was successful; no additional transfer is needed.", id="upi-transfer-confirmation"),
+    pytest.param("A bank fixed deposit offers a guaranteed 7% annual interest rate under the published terms.", id="return-bank-fixed-deposit-rate"),
+    pytest.param("The balanced fund's factsheet lists historical returns and states that future performance is not guaranteed.", id="return-historical-performance-disclaimer"),
+    pytest.param("Government savings bonds pay the published annual coupon according to their official schedule.", id="return-government-bond-coupon"),
+    pytest.param("A savings account rate is variable and shown in the bank's official rate table.", id="return-variable-bank-savings-rate"),
+    pytest.param("Consumer warning: do not trust ads promising guaranteed 18% daily returns from a private pool.", id="return-scam-warning"),
+    pytest.param("We are pleased to offer you a full-time role. Salary and benefits are in the attached contract; there is no upfront fee.", id="fee-genuine-job-offer-no-fee"),
+    pytest.param("Employer onboarding costs are covered by the company. New hires do not pay a registration or training charge.", id="fee-employer-covers-onboarding"),
+    pytest.param("Your approved loan's processing charge is deducted from the disbursed amount under the signed agreement; no upfront payment is requested.", id="fee-loan-charge-deducted-after-disbursement"),
+    pytest.param("Your contest prize is ready for collection at the organizer's office. There is no fee to claim it.", id="fee-prize-no-claim-charge"),
+    pytest.param("The employment agency's official policy states that candidates never pay refundable deposits for job placement.", id="fee-agency-policy-no-deposit"),
+    pytest.param("A friend I know from my building asked if I can lend a small amount in person until payday; there is no urgency.", id="online-friend-neighbor-in-person"),
+    pytest.param("My old classmate asked for a small loan during lunch; we met at school and there is no pressure to send it now.", id="online-old-classmate-casual-loan"),
+    pytest.param("A neighbor texted about splitting grocery costs; I can pay them in person this weekend.", id="online-neighbor-shared-groceries"),
+    pytest.param("A friend from work asked if I could cover a taxi fare at the office; we can settle it tomorrow.", id="online-coworker-expense"),
+    pytest.param("A friend I first met at a volunteer event asked to borrow cash in person; there is no immediate deadline.", id="online-volunteer-friend-in-person"),
+]
+
+
+@pytest.mark.parametrize("message", V4_GENUINE_LOOKALIKES)
+def test_v4_genuine_lookalikes_remain_low_and_uncategorized(message):
     result = classify_message(message)
     score, level, _ = score_findings(result["findings"])
 

@@ -58,6 +58,13 @@ FAMILY_NAMES = {
     "loan_app_install": "instruction to install a loan app",
     "sensitive_app_permissions": "request for contacts, photos, or messages access",
     "loan_processing_charge": "loan processing or release charge",
+    "credential_data_request": "request for sensitive identity or financial details",
+    "remote_support_app_install": "request to install remote-access or support software",
+    "wallet_payment_to_unlock": "payment of coins or funds to activate or unlock a wallet benefit",
+    "upi_payment_to_receive": "UPI payment requested to unlock or receive something",
+    "guaranteed_return_claim": "guaranteed or unusually high investment return claim",
+    "upfront_benefit_fee": "upfront or refundable fee/deposit tied to a job, loan, or prize",
+    "online_relationship_money_request": "urgent money request from someone met online",
 }
 
 # These are explicitly contextual combinations. Context words alone never add
@@ -81,8 +88,8 @@ SIGNAL_PATTERNS = {
     "criminal_case_claim": re.compile(r"\b(?:criminal case|criminal complaint|under investigation|identity.{0,25}linked to.{0,30}(?:case|crime)|linked to.{0,20}(?:criminal case|crime))\b", re.I),
     "warrant_threat": re.compile(r"\b(?:warrant(?: will be issued| has been issued)?|issue an arrest warrant|arrest warrant)\b", re.I),
     "stay_on_call": re.compile(r"\b(?:stay|remain|keep|continue)\s+(?:on|in)\s+(?:this\s+)?(?:call|line)\b|\bdo not hang up\b", re.I),
-    "job_offer": re.compile(r"\b(?:job offer|work[- ]from[- ]home|position|shortlisted|vacancy|employment)\b", re.I),
-    "salary_offer": re.compile(r"\b(?:salary|per month|monthly pay|monthly salary|remuneration)\b", re.I),
+    "job_offer": re.compile(r"\b(?:job offer|work[- ]from[- ]home|position|shortlisted|vacancy|employment|recruit(?:ing|ment)?|part[- ]time|product reviewers?|tasks?)\b", re.I),
+    "salary_offer": re.compile(r"\b(?:salary|per month|monthly pay|monthly salary|remuneration)\b|\bearn(?:ing)?\b.{0,50}\b(?:per day|daily|per month|monthly)\b", re.I),
     "upfront_job_fee": re.compile(r"\b(?:registration|application|training|security)\s+(?:fee|charge|deposit)\b|\brefundable\b.{0,35}\b(?:fee|charge|deposit)\b|\b(?:upfront|advance)\s+(?:fee|charge|deposit)\b", re.I),
     "utility_service": re.compile(r"\b(?:electricity|power|water|gas|utility)\b", re.I),
     "utility_disconnection": re.compile(r"\b(?:disconnect(?:ed|ion)?|power will be cut|service will be shut off|connection will be discontinued|cut off|shut off)\b", re.I),
@@ -90,19 +97,38 @@ SIGNAL_PATTERNS = {
     "loan_app_install": re.compile(r"\binstall\s+(?:(?:the|an?)\s+)?(?:(?:official|bank|loan|mobile)\s+)?(?:[\w.-]+\s+)?app\b|\binstall\s+[A-Z][A-Za-z0-9_-]{2,}\b", re.I),
     "sensitive_app_permissions": re.compile(r"\b(?:allow|grant|give|enable|access)\b.{0,40}\b(?:contacts|photos|messages)\b|\b(?:contacts|photos|messages)\b.{0,25}\b(?:permission|access)\b", re.I),
     "loan_processing_charge": re.compile(r"\b(?:processing|release|disbursal|upfront)\s+(?:fee|charge|payment)\b", re.I),
+    "credential_data_request": re.compile(r"\b(?:send|submit|provide|enter|share|upload|type|email|text|reply)\b.{0,100}\b(?:card(?:\s+(?:number|details?))?|cvv|cvc|pin|password|passcode|aadhaar|pan|bank details|account details|date of birth|full address|payment details)\b", re.I),
+    "remote_support_app_install": re.compile(r"\binstall\b.{0,70}\b(?:remote access|remote support|screen[- ]sharing|remote[- ]control|anydesk|teamviewer|quickassist)\b|\b(?:remote access|remote support|screen[- ]sharing|remote[- ]control)\s+(?:app|software|tool)\b.{0,30}\binstall\b", re.I),
+    "wallet_payment_to_unlock": re.compile(r"\b(?:send|transfer|deposit|pay)\b.{0,100}\b(?:coins?|crypto|funds?|money)\b.{0,100}\b(?:wallet|crypto wallet)\b.{0,100}\b(?:unlock|activate|receive|release|claim|membership)\b|\b(?:send|transfer|deposit|pay)\b.{0,100}\b(?:wallet|crypto wallet)\b.{0,100}\b(?:coins?|crypto|funds?|money)\b.{0,100}\b(?:unlock|activate|receive|release|claim|membership)\b", re.I),
+    "upi_payment_to_receive": re.compile(r"\b(?:send|transfer|pay)\b.{0,100}\b(?:upi(?:\s+(?:id|address))?)\b.{0,100}\b(?:unlock|activate|receive|release|claim)\b|\b(?:unlock|activate|receive|release|claim)\b.{0,100}\b(?:send|transfer|pay)\b.{0,100}\b(?:upi(?:\s+(?:id|address))?)\b", re.I),
+    "guaranteed_return_claim": re.compile(r"\bguaranteed\b.{0,60}\b(?:returns?|profit|yield)\b|\bguaranteed\b.{0,35}\b\d{1,3}(?:\.\d+)?\s*%\s*(?:daily|per day|weekly|monthly|returns?|profit|yield)\b|\b(?:1[5-9]|[2-9]\d|100)(?:\.\d+)?\s*%\s*(?:daily|per day|weekly|monthly)\b", re.I),
+    "upfront_benefit_fee": re.compile(r"\b(?:job|work|position|employment|recruit(?:ing|ment)?|reviewers?|tasks?|loan|prize|winnings?|offer|membership)\b.{0,150}\b(?:refundable|upfront|registration|onboarding|application|processing|training|release|security)\b.{0,60}\b(?:fees?|deposit|charge)\b|\b(?:refundable|upfront|registration|onboarding|application|processing|training|release|security)\b.{0,60}\b(?:fees?|deposit|charge)\b.{0,150}\b(?:job|work|position|employment|recruit(?:ing|ment)?|reviewers?|tasks?|loan|prize|winnings?|offer|membership)\b", re.I),
+    "online_relationship_money_request": re.compile(r"(?=.*\b(?:met online|met on (?:a )?(?:dating app|dating site)|online friend|dating app)\b)(?=.*\b(?:urgent(?:ly)?|emergency|hospital|medical|today|right now|immediately)\b)(?=.*\b(?:send|transfer|borrow|lend|need|money|cash|amount|deposit)\b).+", re.I),
 }
 
 _PAYMENT_NOT_REQUESTED = re.compile(
-    r"\b(?:no|without)\s+(?:any\s+)?(?:payment|fees?|charges?|penalties?)\b|"
-    r"\b(?:no|without)\b(?:\W+\w+){0,4}\W*(?:payment|fees?|charges?|penalties?)\b|"
+    r"\b(?:no|without)\s+(?:any\s+)?(?:payment|fees?|charges?|penalties?|deposits?)\b|"
+    r"\b(?:no|without)\b(?:\W+\w+){0,8}\W*(?:payment|fees?|charges?|penalties?|deposits?)\b|"
     r"\bwithout\s+a\s+(?:fee|charge|penalty)\b|"
-    r"\b(?:fees?|charges?|penalties?|payment|clearance)\b.{0,35}\b(?:already paid|paid|prepaid|settled|waived|included|covered|not due|not required)\b|"
-    r"\b(?:already paid|paid in advance|prepaid|settled|waived|included|covered)\b.{0,35}\b(?:fees?|charges?|penalties?|payment|clearance)\b|"
+    r"\b(?:fees?|charges?|penalties?|deposits?|payment|clearance)\b.{0,35}\b(?:already paid|paid|prepaid|settled|waived|included|covered|deducted|not due|not required)\b|"
+    r"\b(?:already paid|paid in advance|prepaid|settled|waived|included|covered|deducted)\b.{0,35}\b(?:fees?|charges?|penalties?|deposits?|payment|clearance)\b|"
     r"\b(?:do not|don't|never)\s+pay\b",
     re.I,
 )
 _NEGATED_SERVICE_THREAT = re.compile(
     r"\b(?:no|not|never|won't|will not|isn't|is not|remains?|remain)\b.{0,24}\b(?:restrict(?:ed|ion)?|suspend(?:ed|sion)?|block(?:ed|ing)?|disconnect(?:ed|ion)?|cut off|shut off)\b",
+    re.I,
+)
+_NEGATED_REQUEST = re.compile(
+    r"\b(?:do not|don't|never|avoid|will never|will not)\b.{0,90}\b(?:ask|send|transfer|deposit|pay|install|share|provide|enter|upload|type|email|text|reply)\b",
+    re.I,
+)
+_NEGATED_SENSITIVE_REQUEST = re.compile(
+    r"\b(?:do not|don't|never|will never|will not)\b.{0,90}\b(?:ask|send|share|provide|enter|upload|type|email|text|reply|disclose|reveal)\b",
+    re.I,
+)
+_NEGATED_RETURN_CLAIM = re.compile(
+    r"\b(?:do not|don't|never|avoid|beware|warning|not)\b.{0,80}\b(?:guaranteed|assured|risk[- ]free|returns?|profit|yield)\b",
     re.I,
 )
 _OTP_ADVICE_BEFORE = re.compile(
@@ -117,7 +143,16 @@ _OTP_ADVICE_AFTER = re.compile(
 )
 
 
-def _active_matches(text: str, pattern: re.Pattern[str], *, payment: bool = False, service_threat: bool = False) -> list[str]:
+def _active_matches(
+    text: str,
+    pattern: re.Pattern[str],
+    *,
+    payment: bool = False,
+    service_threat: bool = False,
+    request: bool = False,
+    sensitive_request: bool = False,
+    return_claim: bool = False,
+) -> list[str]:
     found = []
     for match in pattern.finditer(text):
         local_context = text[max(0, match.start() - 45):min(len(text), match.end() + 45)]
@@ -125,8 +160,23 @@ def _active_matches(text: str, pattern: re.Pattern[str], *, payment: bool = Fals
             continue
         if service_threat and _NEGATED_SERVICE_THREAT.search(local_context):
             continue
+        if request and _NEGATED_REQUEST.search(local_context):
+            continue
+        if sensitive_request and _NEGATED_SENSITIVE_REQUEST.search(local_context):
+            continue
+        if return_claim and _NEGATED_RETURN_CLAIM.search(local_context):
+            continue
+        if return_claim and _is_normal_bank_fixed_rate(text):
+            continue
         found.append(match.group(0))
     return found
+
+
+def _is_normal_bank_fixed_rate(text: str) -> bool:
+    has_bank_deposit = re.search(r"\b(?:fixed deposit|term deposit|bank deposit|bank fd)\b", text, re.I)
+    modest_annual_rate = re.search(r"\b\d{1,2}(?:\.\d+)?\s*%\s*(?:annual|per annum|p\.a\.?|yearly)\b", text, re.I)
+    high_rate = re.search(r"\b(?:1[5-9]|[2-9]\d|100)(?:\.\d+)?\s*%\b", text, re.I)
+    return bool(has_bank_deposit and modest_annual_rate and not high_rate)
 
 
 def _advisory_negated(text: str, start: int, end: int) -> bool:
@@ -165,6 +215,11 @@ def classify_message(text: str) -> dict:
             for match in re.finditer(re.escape(phrase), lowered):
                 if key == "otp_request" and _advisory_negated(lowered, match.start(), match.end()):
                     continue
+                context = lowered[max(0, match.start() - 90):min(len(lowered), match.end() + 90)]
+                if key in {"credential_request", "sensitive_data_request"} and _NEGATED_SENSITIVE_REQUEST.search(context):
+                    continue
+                if key == "remote_access" and _NEGATED_REQUEST.search(context):
+                    continue
                 matched.append(phrase)
                 break
         if matched:
@@ -185,8 +240,11 @@ def classify_message(text: str) -> dict:
         name: _active_matches(
             lowered,
             pattern,
-            payment=name == "pay_penalty_fee",
+            payment=name in {"pay_penalty_fee", "upfront_job_fee", "upfront_benefit_fee"},
             service_threat=name in {"account_restriction", "utility_disconnection"},
+            request=name in {"remote_support_app_install", "wallet_payment_to_unlock", "upi_payment_to_receive", "online_relationship_money_request"},
+            sensitive_request=name == "credential_data_request",
+            return_claim=name == "guaranteed_return_claim",
         )
         for name, pattern in SIGNAL_PATTERNS.items()
         if name in configured_families
@@ -198,13 +256,13 @@ def classify_message(text: str) -> dict:
     family_contexts: dict[str, set[str]] = {}
     contexts: set[str] = set()
     for category_config in CATEGORIES:
-        combo = category_config.get("signal_combination")
-        if not combo:
-            continue
-        context = combo["context"]
-        contexts.add(context)
-        for family in category_config.get("signal_families", []):
-            family_contexts.setdefault(family, set()).add(context)
+        combos = ([category_config["signal_combination"]] if category_config.get("signal_combination") else [])
+        combos.extend(category_config.get("additional_signal_combinations", []))
+        for combo in combos:
+            context = combo["context"]
+            contexts.add(context)
+            for family in category_config.get("signal_families", []):
+                family_contexts.setdefault(family, set()).add(context)
     active_contexts = active_signals.intersection(contexts)
     active_signals = {
         signal
@@ -213,6 +271,17 @@ def classify_message(text: str) -> dict:
         or signal in active_contexts
         or bool(family_contexts.get(signal, set()).intersection(active_contexts))
     }
+    duplicate_indicators = {
+        "credential_data_request": {"sensitive_data_request"},
+        "remote_support_app_install": {"remote_access"},
+        "wallet_payment_to_unlock": {"financial_action", "unusual_payment"},
+        "upi_payment_to_receive": {"financial_action", "unusual_payment"},
+        "guaranteed_return_claim": {"reward_bait"},
+        "upfront_benefit_fee": {"financial_action"},
+        "online_relationship_money_request": {"financial_action"},
+    }
+    suppressed_indicators = {indicator for family in active_signals for indicator in duplicate_indicators.get(family, set())}
+    matched_indicators = [item for item in matched_indicators if item["indicator"] not in suppressed_indicators]
     findings = list(matched_indicators)
     for name in sorted(active_signals):
         examples = ", ".join(dict.fromkeys(signal_matches[name][:3]))
@@ -226,6 +295,7 @@ def classify_message(text: str) -> dict:
 
     category_names = {entry["code"]: entry["name"] for entry in CATEGORIES}
     category_hits: Counter[str] = Counter()
+    seeded_category_hits: Counter[str] = Counter()
     for category in CATEGORIES:
         for phrase in category.get("patterns", []):
             matches = list(re.finditer(re.escape(phrase.lower()), lowered))
@@ -233,33 +303,34 @@ def classify_message(text: str) -> dict:
                 matches = [match for match in matches if not _advisory_negated(lowered, match.start(), match.end())]
             if matches:
                 category_hits[category["code"]] += 1
+                seeded_category_hits[category["code"]] += 1
 
     for category_config in CATEGORIES:
         category_code = category_config["code"]
-        combo = category_config.get("signal_combination")
-        if not combo:
-            continue
-        combo_strong = set(combo.get("strong", []))
-        combo_actions = set(combo.get("action_required", []))
-        if combo["context"] not in active_signals:
-            continue
-        if "qualifying_context" in combo and not active_signals.intersection(combo["qualifying_context"]):
-            continue
-        if not active_signals.intersection(combo_actions):
-            continue
-        strong_signals = sorted(active_signals.intersection(combo_strong))
-        if len(strong_signals) < combo.get("minimum_signals", 2):
-            continue
-        category_hits[category_code] += 1
-        score_weight = 50 if len(strong_signals) >= combo.get("high_signals", 3) else 30
-        names = ", ".join(FAMILY_NAMES[name] for name in strong_signals)
-        findings.append({
-            "indicator": f"signal_combination:{category_code}",
-            "detail": f"Combined signals ({len(strong_signals)}): {names}.",
-            "verification_level": "heuristic",
-            "source": "deterministic_signal_combinations",
-            "score_weight": score_weight,
-        })
+        combos = ([category_config["signal_combination"]] if category_config.get("signal_combination") else [])
+        combos.extend(category_config.get("additional_signal_combinations", []))
+        for combo in combos:
+            combo_strong = set(combo.get("strong", []))
+            combo_actions = set(combo.get("action_required", []))
+            if combo["context"] not in active_signals:
+                continue
+            if "qualifying_context" in combo and not active_signals.intersection(combo["qualifying_context"]):
+                continue
+            if combo_actions and not active_signals.intersection(combo_actions):
+                continue
+            strong_signals = sorted(active_signals.intersection(combo_strong))
+            if len(strong_signals) < combo.get("minimum_signals", 2):
+                continue
+            category_hits[category_code] = max(category_hits[category_code], 1)
+            score_weight = 50 if len(strong_signals) >= combo.get("high_signals", 3) else 30
+            names = ", ".join(FAMILY_NAMES[name] for name in strong_signals)
+            findings.append({
+                "indicator": f"signal_combination:{category_code}",
+                "detail": f"Combined signals ({len(strong_signals)}): {names}.",
+                "verification_level": "heuristic",
+                "source": "deterministic_signal_combinations",
+                "score_weight": score_weight,
+            })
 
     if {"unverified_domain", "urgency"} <= active_signals:
         findings.append({
@@ -279,12 +350,18 @@ def classify_message(text: str) -> dict:
         })
 
     for code, count in category_hits.items():
+        seeded_count = seeded_category_hits.get(code, 0)
+        detail = (
+            f"Message matches {seeded_count} seeded pattern(s) for {category_names[code]}."
+            if seeded_count
+            else f"Message matches a configured signal combination for {category_names[code]}."
+        )
         findings.append({
             "indicator": f"category:{code}",
-            "detail": f"Message matches {count} seeded pattern(s) for {category_names[code]}.",
+            "detail": detail,
             "verification_level": "heuristic",
-            "source": "seeded_scam_patterns" if not any(entry["code"] == code and "signal_combination" in entry for entry in CATEGORIES) else "deterministic_signal_combinations",
-            "score_weight": 0 if any(entry["code"] == code and "signal_combination" in entry for entry in CATEGORIES) else 8,
+            "source": "seeded_scam_patterns" if seeded_count else "deterministic_signal_combinations",
+            "score_weight": 8 if seeded_count else 0,
         })
 
     category = category_hits.most_common(1)[0][0] if category_hits else None
