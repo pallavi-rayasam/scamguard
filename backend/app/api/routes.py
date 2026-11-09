@@ -35,7 +35,7 @@ def _set_session(response: Response, user: User) -> None:
 @router.get("/auth/csrf")
 def get_csrf(response: Response) -> dict:
     token = csrf_token()
-    response.set_cookie("scamguard_csrf", token, httponly=False, secure=settings.cookie_secure, samesite="lax", max_age=8 * 60 * 60, path="/")
+    response.set_cookie("scamguard_csrf", token, httponly=False, secure=settings.cookie_secure, samesite="none", max_age=8 * 60 * 60, path="/")
     return {"csrf_token": token}
 
 
