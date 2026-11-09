@@ -41,3 +41,12 @@ local.db
 Thumbs.db
 desktop.ini
 
+
+# Private incoming review datasets
+/ml/data/incoming/
+
+# Private dataset review reports
+/ml/reports/incoming_review_exclusions.csv
+
+# Keep reviewed training dataset private until provenance is verified
+/ml/data/indian_scam_examples_v2.csv

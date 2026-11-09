@@ -6,6 +6,9 @@ COPY backend/pyproject.toml ./
 COPY backend/app ./app
 COPY backend/migrations ./migrations
 COPY backend/alembic.ini ./alembic.ini
+COPY ml/model_pipeline.py /app/ml/model_pipeline.py
+COPY ml/artifacts/message-text-v1 /app/ml/artifacts/message-text-v1
+COPY docs/testing/evaluation-report-v2.json /app/docs/testing/evaluation-report-v2.json
 COPY data /app/data
 RUN pip install --no-cache-dir .
 EXPOSE 8000

@@ -1,0 +1,107 @@
+{
+  "artifact_file": "pipeline.joblib",
+  "artifact_sha256": "ca4c3dcdba4f9b975efe11ab92ad633af27256fb6351c9f1a85b073a6527260d",
+  "calibrated_probability_supported": false,
+  "calibration_status": "not_justified",
+  "class_labels": [
+    "legitimate",
+    "scam"
+  ],
+  "dependencies": {
+    "joblib": "1.6.0",
+    "python": "3.12.0",
+    "scikit_learn": "1.9.1"
+  },
+  "held_out_test_metrics": {
+    "accuracy": 1.0,
+    "confusion_matrix": {
+      "labels": [
+        "legitimate",
+        "scam"
+      ],
+      "rows_actual_columns_predicted": [
+        [
+          3,
+          0
+        ],
+        [
+          0,
+          3
+        ]
+      ]
+    },
+    "f1_scam": 1.0,
+    "false_negative_rate": 0.0,
+    "false_positive_rate": 0.0,
+    "n": 6,
+    "precision_scam": 1.0,
+    "recall_scam": 1.0
+  },
+  "intended_use": "Experimental single-message classification advisory; never determines risk severity.",
+  "label_counts_by_split": {
+    "test": {
+      "legitimate": 3,
+      "scam": 3
+    },
+    "train": {
+      "legitimate": 10,
+      "scam": 160
+    },
+    "validation": {
+      "legitimate": 3,
+      "scam": 3
+    }
+  },
+  "label_mapping": {
+    "class_labels": [
+      "legitimate",
+      "scam"
+    ],
+    "positive_class": "scam"
+  },
+  "limitations": [
+    "The held-out test split contains only six records.",
+    "The training data is highly imbalanced and has limited source diversity.",
+    "The model is not calibrated and must not be displayed as a probability."
+  ],
+  "manifest_schema_version": 1,
+  "model_version": "message-text-v1",
+  "source_code_revision": {
+    "commit": "1977f44d8465a2c4683b869bcba84458fd18c644",
+    "working_tree_dirty": true
+  },
+  "split_counts": {
+    "test": 6,
+    "train": 170,
+    "validation": 6
+  },
+  "training_dataset": "ml/data/indian_scam_examples_v2.csv",
+  "training_dataset_sha256": "17dc9006c2cff215573099bb1c6dfc7d07bf4107fc961729c495e4f46dbb9669",
+  "training_parameters": {
+    "decision_threshold": 0.6282515397467441,
+    "decision_threshold_selected_on": "validation only",
+    "fit_partition": "train only",
+    "pipeline": {
+      "classifier": {
+        "class_weight": "balanced",
+        "max_iter": 2000,
+        "random_state": 42
+      },
+      "tfidf": {
+        "max_features": 20000,
+        "ngram_range": [
+          1,
+          2
+        ],
+        "sublinear_tf": true
+      }
+    },
+    "seed": 42
+  },
+  "training_source_sha256": {
+    "backend/app/detection/normalize.py": "e1440101c879bb131a2bf0ff8baf2197dc15513aa3d2456f7b52e2d4aa6673b9",
+    "ml/evaluate.py": "52b8422a91c8b736ff4374a00062692b9c19877e5a9b088295dfe54517603f35",
+    "ml/model_pipeline.py": "93431e31a5f586269daa3d3fb7622bd2c32ab99f7b06bc2132bb9825989955b6",
+    "ml/train_model.py": "35b96d4b2edb4ba377abe4a06aed36b455e3e1ff5bb27de7d86dfe26eaf737bd"
+  }
+}

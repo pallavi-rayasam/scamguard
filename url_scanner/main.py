@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from url_scanner.analysis import analyze_url
+from url_scanner.config import settings
 from url_scanner.intel import check_reputation
 from url_scanner.ssrf_guard import (
     MAX_BODY_BYTES,
@@ -27,6 +28,13 @@ class ScanRequest(BaseModel):
 
 app = FastAPI(title="ScamGuard URL Scanner", version="0.1.0", description="Internal SSRF-guarded URL structure and reputation service.")
 SAFE_GET_CONTENT_TYPES = {"text/html", "text/plain", "application/xhtml+xml"}
+
+
+def _provider_lookup_skipped(reason: str) -> list[dict]:
+    return [
+        {"provider": provider, "status": "skipped", "is_malicious": None, "reason": reason}
+        for provider in ("google_safe_browsing", "virustotal")
+    ]
 
 
 class ScannerRateLimitMiddleware:
@@ -79,10 +87,7 @@ def scan_url(url: str, include_intel: bool = True) -> dict:
             "origin": None,
             "fetch": {"status": "blocked", "reason": exc.code},
             "findings": findings,
-            "threat_intel_results": [
-                {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "target_not_publicly_validated"}
-                for provider in ("google_safe_browsing", "virustotal")
-            ],
+            "threat_intel_results": _provider_lookup_skipped(exc.code),
             "risk_score": _score(findings)[0],
             "risk_level": _score(findings)[1],
         }
@@ -90,10 +95,8 @@ def scan_url(url: str, include_intel: bool = True) -> dict:
         return {
             "status": "unavailable", "reason": exc.code, "origin": None,
             "fetch": {"status": "unavailable", "reason": exc.code}, "findings": findings,
-            "threat_intel_results": [
-                {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "target_not_publicly_validated"}
-                for provider in ("google_safe_browsing", "virustotal")
-            ], "risk_score": _score(findings)[0], "risk_level": _score(findings)[1],
+            "threat_intel_results": _provider_lookup_skipped(exc.code),
+            "risk_score": _score(findings)[0], "risk_level": _score(findings)[1],
         }
 
     try:
@@ -117,10 +120,7 @@ def scan_url(url: str, include_intel: bool = True) -> dict:
         return {
             "status": "blocked", "reason": exc.code, "origin": target.origin,
             "fetch": {"status": "blocked", "reason": exc.code}, "findings": findings,
-            "threat_intel_results": [
-                {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "redirect_target_not_public"}
-                for provider in ("google_safe_browsing", "virustotal")
-            ],
+            "threat_intel_results": _provider_lookup_skipped(exc.code),
             "risk_score": _score(findings)[0], "risk_level": _score(findings)[1],
         }
     except FetchUnavailable as exc:
@@ -152,7 +152,14 @@ def scan_url(url: str, include_intel: bool = True) -> dict:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "available", "service": "url-scanner"}
+    return {
+        "status": "available",
+        "service": "url-scanner",
+        "provider_configuration": {
+            "google_safe_browsing": "configured" if settings.google_safe_browsing_key else "not_configured",
+            "virustotal": "configured" if settings.virustotal_api_key else "not_configured",
+        },
+    }
 
 
 @app.post("/analyze")
@@ -171,20 +178,14 @@ def reputation(payload: ScanRequest) -> dict:
             "status": "blocked",
             "reason": exc.code,
             "origin": None,
-            "threat_intel_results": [
-                {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "target_not_publicly_validated"}
-                for provider in ("google_safe_browsing", "virustotal")
-            ],
+            "threat_intel_results": _provider_lookup_skipped(exc.code),
         }
     except FetchUnavailable as exc:
         return {
             "status": "unavailable",
             "reason": exc.code,
             "origin": None,
-            "threat_intel_results": [
-                {"provider": provider, "status": "unavailable", "is_malicious": None, "reason": "target_not_publicly_validated"}
-                for provider in ("google_safe_browsing", "virustotal")
-            ],
+            "threat_intel_results": _provider_lookup_skipped(exc.code),
         }
     return {
         "status": "completed",

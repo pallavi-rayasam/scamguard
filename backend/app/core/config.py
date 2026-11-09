@@ -1,6 +1,7 @@
 """Application configuration from environment variables."""
 from dataclasses import dataclass
 import math
+from pathlib import Path
 import os
 from dotenv import load_dotenv
 
@@ -52,6 +53,12 @@ class Settings:
     google_safe_browsing_key: str = os.getenv("GOOGLE_SAFE_BROWSING_API_KEY", "")
     virustotal_api_key: str = os.getenv("VIRUSTOTAL_API_KEY", "")
     tesseract_cmd: str = os.getenv("TESSERACT_CMD", "")
+    ml_model_enabled: bool = os.getenv("ML_MODEL_ENABLED", "true").lower() == "true"
+    ml_model_version: str = os.getenv("ML_MODEL_VERSION", "message-text-v1")
+    ml_model_path: str = os.getenv(
+        "ML_MODEL_PATH",
+        str(Path(__file__).resolve().parents[3] / "ml" / "artifacts" / "message-text-v1" / "pipeline.joblib"),
+    )
 
 
 settings = Settings()

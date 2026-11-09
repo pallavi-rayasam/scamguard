@@ -46,6 +46,9 @@ services:
       FRONTEND_ORIGIN: http://localhost:5173
       URL_SCANNER_URL: http://url-scanner:8001
       TESSERACT_CMD: tesseract
+      ML_MODEL_ENABLED: ${ML_MODEL_ENABLED:-true}
+      ML_MODEL_VERSION: ${ML_MODEL_VERSION:-message-text-v1}
+      ML_MODEL_PATH: /app/ml/artifacts/message-text-v1/pipeline.joblib
     networks:
       - app
       - scanner_internal

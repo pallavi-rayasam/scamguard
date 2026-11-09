@@ -1,4 +1,5 @@
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 from threading import Lock
 import time
 
@@ -8,8 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.exc import OperationalError
 
+from app.api.admin_routes import router as admin_router
 from app.api.routes import router
 from app.core.config import settings
+from app.ml.predictor import MessagePredictor
 from app.ocr import MAX_IMAGE_BYTES, MAX_MULTIPART_OVERHEAD
 
 
@@ -78,7 +81,23 @@ class ImageUploadBodyLimitMiddleware:
         await self.app(scope, replay_receive, send)
 
 
-app = FastAPI(title="ScamGuard Investigation API", version="0.1.0", description="Advisory scam investigation reports with explicit evidence provenance.")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    # Load once per worker at startup. A missing/invalid artifact leaves the API usable.
+    application.state.message_predictor = MessagePredictor.load(
+        settings.ml_model_path,
+        expected_version=settings.ml_model_version,
+        enabled=settings.ml_model_enabled,
+    )
+    yield
+
+
+app = FastAPI(
+    title="ScamGuard Investigation API",
+    version="0.1.0",
+    description="Advisory scam investigation reports with explicit evidence provenance.",
+    lifespan=lifespan,
+)
 app.add_middleware(RequestGuardMiddleware)
 app.add_middleware(ImageUploadBodyLimitMiddleware)
 app.add_middleware(
@@ -89,6 +108,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-CSRF-Token"],
 )
 app.include_router(router)
+app.include_router(admin_router)
 
 
 @app.exception_handler(OperationalError)

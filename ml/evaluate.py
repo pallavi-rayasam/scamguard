@@ -25,6 +25,16 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND_PATH = ROOT / "backend"
 if str(BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(BACKEND_PATH))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ml.model_pipeline import (  # noqa: E402
+    build_pipeline,
+    choose_scam_threshold,
+    positive_probabilities,
+    preprocess_text,
+)
+
 REQUIRED_COLUMNS = ("text", "label", "category", "source", "author", "split")
 LABELS = ("legitimate", "scam")
 SPLITS = ("train", "validation", "test")
@@ -212,18 +222,11 @@ def bootstrap_confidence_intervals(
 
 
 def _choose_threshold(actual: list[str], probabilities: list[float]) -> float:
-    candidates = sorted({0.0, 0.5, 1.0, *probabilities})
-    ranked = []
-    for threshold in candidates:
-        predicted = ["scam" if probability >= threshold else "legitimate" for probability in probabilities]
-        metrics = _binary_metrics(actual, predicted)
-        ranked.append((metrics["f1_scam"], -abs(threshold - 0.5), threshold))
-    return max(ranked)[2]
+    return choose_scam_threshold(actual, probabilities)
 
 
 def _positive_probabilities(model: Pipeline, texts: list[str]) -> list[float]:
-    scam_index = list(model.classes_).index("scam")
-    return [float(value) for value in model.predict_proba(texts)[:, scam_index]]
+    return positive_probabilities(model, texts)
 
 
 def _rules_prediction(text: str) -> str:
@@ -336,11 +339,11 @@ def cross_validate_train_validation(
         fold_train = [rows[int(i)] for i in train_indices]
         heldout = [rows[int(i)] for i in heldout_indices]
         assert_no_test_train_leakage({"train": fold_train, "test": heldout})
-        fold_model = Pipeline([
-            ("tfidf", TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True, max_features=20000)),
-            ("classifier", LogisticRegression(max_iter=2000, class_weight="balanced", random_state=seed)),
-        ])
-        fold_model.fit([row["text"] for row in fold_train], [row["label"] for row in fold_train])
+        fold_model = build_pipeline(seed=seed)
+        fold_model.fit(
+            [preprocess_text(row["text"]) for row in fold_train],
+            [row["label"] for row in fold_train],
+        )
         fold_predictions = {
             "tfidf_logistic_regression": ["scam" if score >= 0.5 else "legitimate" for score in _positive_probabilities(fold_model, [row["text"] for row in heldout])],
             "current_rules_scoring": [_rules_prediction(row["text"]) for row in heldout],
@@ -376,11 +379,11 @@ def evaluate_dataset(
     splits = split_dataset(rows, seed)
     train, validation, test = (splits[name] for name in SPLITS)
     assert_no_test_train_leakage(splits)
-    model = Pipeline([
-        ("tfidf", TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True, max_features=20000)),
-        ("classifier", LogisticRegression(max_iter=2000, class_weight="balanced", random_state=seed)),
-    ])
-    model.fit([row["text"] for row in train], [row["label"] for row in train])
+    model = build_pipeline(seed=seed)
+    model.fit(
+        [preprocess_text(row["text"]) for row in train],
+        [row["label"] for row in train],
+    )
     validation_probabilities = _positive_probabilities(model, [row["text"] for row in validation])
     threshold = _choose_threshold([row["label"] for row in validation], validation_probabilities)
 

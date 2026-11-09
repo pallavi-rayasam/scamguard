@@ -13,6 +13,7 @@ dependencies = [
   "email-validator==2.3.0",
   "fastapi==0.142.2",
   "httpx==0.28.1",
+  "joblib==1.6.0",
   "langgraph==1.2.4",
   "opencv-python-headless==5.0.0.93",
   "psycopg[binary]==3.2.10",
@@ -24,6 +25,7 @@ dependencies = [
   "reportlab==5.1.0",
   "scikit-learn==1.9.1",
   "sqlalchemy==2.0.57",
+  "tzdata==2026.6",
   "uvicorn[standard]==0.36.0",
 ]
 

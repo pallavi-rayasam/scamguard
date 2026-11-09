@@ -1,0 +1,46 @@
+{
+  "accepted_training_records": 150,
+  "author_policy": "source_author_unrecorded",
+  "baseline_file": "indian_scam_examples.csv",
+  "cross_split_exact_or_near_duplicate_pairs": 0,
+  "excluded_records": 38,
+  "exclusion_reason_counts_note": "A record can have multiple reasons; these counts are not mutually exclusive.",
+  "exclusion_reason_counts_overlapping": {
+    "contains_personal_data": 2,
+    "message_quality_not_good": 3,
+    "not_approved_for_training": 33,
+    "possible_aadhaar_value": 1,
+    "possible_card_value": 1,
+    "possible_upi_value": 2,
+    "verified_label_not_scam": 33
+  },
+  "final_class_distribution": {
+    "legitimate": 16,
+    "scam": 166
+  },
+  "final_dataset_records": 182,
+  "input_records": 188,
+  "label_counts_by_split": {
+    "test": {
+      "legitimate": 3,
+      "scam": 3
+    },
+    "train": {
+      "legitimate": 10,
+      "scam": 160
+    },
+    "validation": {
+      "legitimate": 3,
+      "scam": 3
+    }
+  },
+  "output_file": "indian_scam_examples_v2.csv",
+  "reviewer_notes_or_ids_used_as_features": false,
+  "seed": 42,
+  "source_file": "scamshieldcsv.csv",
+  "split_counts": {
+    "test": 6,
+    "train": 170,
+    "validation": 6
+  }
+}

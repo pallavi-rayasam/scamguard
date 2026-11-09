@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
@@ -7,13 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.agents.workflow import investigate
+from app.admin_metrics import admin_analytics as build_admin_analytics
 from app.core.config import settings
 from app.core.security import admin_user, current_user, csrf_token, enforce_csrf, hash_password, issue_access_token, verify_password
 from app.db.session import get_db
 from app.detection.normalize import load_categories
 from app.models.entities import AgentRun, AuditLog, Evidence, ExtractedURL, Feedback, Investigation, Recommendation, ThreatIntelResult, User
 from app.ocr import MAX_IMAGE_BYTES, ImageDecodeError, OCRTimeoutError, OCRUnavailableError, UnsupportedImageError, extract_text_from_image
-from app.reports.pdf import build_investigation_pdf
+from app.reports.pdf import build_investigation_pdf, resolve_report_time_zone
 from app.schemas.common import ConversationRequest, FeedbackRequest, InvestigationRequest, LoginRequest, RegisterRequest, TransactionRequest, UserResponse
 
 router = APIRouter(prefix="/api")
@@ -151,7 +152,11 @@ def create_text_investigation(
     user: User = Depends(current_user),
 ) -> dict:
     enforce_csrf(request)
-    report = investigate(payload.text, payload.input_type)
+    report = investigate(
+        payload.text,
+        payload.input_type,
+        ml_predictor=getattr(request.app.state, "message_predictor", None),
+    )
     return _persist_investigation(report, payload.text, payload.input_type, db, user)
 
 
@@ -165,7 +170,12 @@ def create_conversation_investigation(
     enforce_csrf(request)
     messages = [item.model_dump() for item in payload.messages]
     submitted_text = "\n".join(f"{item['sender']}: {item['text']}" for item in messages)
-    report = investigate(submitted_text, "conversation", conversation_messages=messages)
+    report = investigate(
+        submitted_text,
+        "conversation",
+        conversation_messages=messages,
+        ml_predictor=getattr(request.app.state, "message_predictor", None),
+    )
     return _persist_investigation(report, submitted_text, "conversation", db, user)
 
 
@@ -193,6 +203,7 @@ def create_transaction_investigation(
             "amount": payload.amount,
             "related_chat": payload.related_chat,
         },
+        ml_predictor=getattr(request.app.state, "message_predictor", None),
     )
     return _persist_investigation(report, submitted_text, "transaction", db, user)
 
@@ -224,7 +235,11 @@ async def create_image_investigation(
         raise HTTPException(status_code=504, detail="OCR timed out; please retry with a smaller image") from None
     if not extracted_text.strip():
         raise HTTPException(status_code=422, detail="No readable text was found in the image")
-    report = investigate(extracted_text, "screenshot")
+    report = investigate(
+        extracted_text,
+        "screenshot",
+        ml_predictor=getattr(request.app.state, "message_predictor", None),
+    )
     return _persist_investigation(report, extracted_text, "screenshot", db, user)
 
 
@@ -268,7 +283,7 @@ def get_report(investigation_id: UUID, user: User = Depends(current_user), db: S
 @router.get("/investigations/{investigation_id}/report.pdf")
 def download_report_pdf(
     investigation_id: UUID,
-    time_zone: str = Query(default="UTC", min_length=1, max_length=64),
+    time_zone: str | None = Query(default=None),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> Response:
@@ -278,14 +293,19 @@ def download_report_pdf(
     report = dict(row.report_json)
     report["category"] = row.category
     report.setdefault("input_type", row.input_type)
+    resolved_time_zone, used_time_zone_fallback = resolve_report_time_zone(time_zone)
     try:
-        content = build_investigation_pdf(report, row.created_at, time_zone)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Unknown time zone") from None
+        content = build_investigation_pdf(report, row.created_at, resolved_time_zone)
+    except Exception:
+        raise HTTPException(status_code=500, detail="The report PDF could not be generated. Please try again.") from None
     return Response(
         content=content,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="scamguard-report-{row.id}.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="scamguard-report-{row.id}.pdf"',
+            "X-Report-Time-Zone": resolved_time_zone,
+            "X-Report-Time-Zone-Fallback": "true" if used_time_zone_fallback else "false",
+        },
     )
 
 
@@ -370,82 +390,13 @@ def scam_awareness() -> dict:
 
 
 @router.get("/admin/analytics")
-def admin_analytics(_: User = Depends(admin_user), db: Session = Depends(get_db)) -> dict:
-    user_counts = {
-        role: count
-        for role, count in db.execute(select(User.role, func.count()).group_by(User.role))
-    }
-
-    investigations = db.execute(
-        select(Investigation.created_at, Investigation.category, Investigation.risk_level)
-    ).all()
-    investigations_per_day: dict[str, int] = {}
-    category_distribution: dict[str, int] = {}
-    risk_distribution: dict[str, int] = {}
-    uncategorized = {"other_suspicious", "other suspicious", "no scam pattern detected"}
-    for created_at, category, risk_level in investigations:
-        day = _utc_timestamp(created_at).date().isoformat()
-        investigations_per_day[day] = investigations_per_day.get(day, 0) + 1
-        if category and category.strip().casefold() not in uncategorized:
-            category_distribution[category] = category_distribution.get(category, 0) + 1
-        risk_distribution[risk_level] = risk_distribution.get(risk_level, 0) + 1
-
-    provider_failure_statuses: dict[str, dict[str, int]] = {}
-    for provider, provider_status, count in db.execute(
-        select(ThreatIntelResult.provider, ThreatIntelResult.status, func.count())
-        .where(ThreatIntelResult.status.in_(["failed", "timed_out", "unavailable"]))
-        .group_by(ThreatIntelResult.provider, ThreatIntelResult.status)
-    ):
-        provider_failure_statuses.setdefault(provider, {})[provider_status] = count
-    provider_failure_counts = {
-        provider: sum(status_counts.values())
-        for provider, status_counts in provider_failure_statuses.items()
-    }
-
-    agent_failure_statuses: dict[str, dict[str, int]] = {}
-    for agent_name, agent_status, count in db.execute(
-        select(AgentRun.agent_name, AgentRun.status, func.count())
-        .where(AgentRun.status.in_(["failed", "timed_out"]))
-        .group_by(AgentRun.agent_name, AgentRun.status)
-    ):
-        agent_failure_statuses.setdefault(agent_name, {})[agent_status] = count
-    agent_failure_counts = {
-        agent: sum(status_counts.values())
-        for agent, status_counts in agent_failure_statuses.items()
-    }
-
-    per_investigation_duration = (
-        select(AgentRun.investigation_id, func.sum(AgentRun.duration_ms).label("duration_ms"))
-        .group_by(AgentRun.investigation_id)
-        .subquery()
-    )
-    average_duration = db.scalar(select(func.avg(per_investigation_duration.c.duration_ms)))
-
-    feedback_counts = {
-        rating: count
-        for rating, count in db.execute(select(Feedback.rating, func.count()).group_by(Feedback.rating))
-    }
-    total_users = sum(user_counts.values())
-
-    return {
-        "total_users": total_users,
-        "user_counts": user_counts,
-        "total_investigations": len(investigations),
-        "investigations_per_day": [
-            {"date": day, "count": investigations_per_day[day]}
-            for day in sorted(investigations_per_day)
-        ],
-        "category_distribution": category_distribution,
-        "risk_distribution": risk_distribution,
-        "provider_failure_counts": provider_failure_counts,
-        "provider_failure_statuses": provider_failure_statuses,
-        "agent_failure_counts": agent_failure_counts,
-        "agent_failure_statuses": agent_failure_statuses,
-        "average_processing_time_ms": round(float(average_duration)) if average_duration is not None else None,
-        "feedback_counts": feedback_counts,
-    }
-
-
-@router.get("/admin/system-health")
-def admin_system_health(_: User = Depends(admin_user)) -> dict:
-    return {"api":"available", "database":"not_checked", "openai":"configured" if settings.openai_api_key else "not_configured", "threat_intel":"configured" if settings.google_safe_browsing_key or settings.virustotal_api_key else "not_configured"}
+def admin_analytics(
+    from_date: date | None = None,
+    to_date: date | None = None,
+    _: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        return build_admin_analytics(db, from_date, to_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None

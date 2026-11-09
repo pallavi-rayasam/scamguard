@@ -1,3 +1,5 @@
+import { getBrowserTimeZone } from './reportFormatting'
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000/api'
 let csrfToken = ''
 
@@ -88,7 +90,11 @@ async function requestBlob(path: string): Promise<Blob> {
       const data = await response.json().catch(() => ({}))
       throw apiError(data.detail, response.status)
     }
-    return await response.blob()
+    const blob = await response.blob()
+    if (blob.size === 0) throw new Error('The server returned an empty PDF. Please try again.')
+    const signature = await blob.slice(0, 5).text()
+    if (signature !== '%PDF-') throw new Error('The server response was not a valid PDF. Please try again.')
+    return blob
   } catch (caught) {
     if (controller.signal.aborted) throw new Error('Request timed out after 15 seconds. Please try again.')
     throw caught
@@ -98,10 +104,56 @@ async function requestBlob(path: string): Promise<Blob> {
 }
 
 export type User = { id: string; email: string; role: string }
+export type AdminActivity = { id: string; input_type: string; category: string | null; risk_score: number; risk_level: string; created_at: string }
+export type AdminInvestigation = AdminActivity & {
+  classification: 'scam' | 'legitimate' | 'uncertain' | 'scam_detected' | 'not_classified'
+  classification_source: string
+  finding_count: number
+  url_count: number
+}
+export type AdminInvestigationPage = {
+  items: AdminInvestigation[]
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+  date_range: { from_date: string; to_date: string }
+  privacy_note: string
+}
+export type AdminInvestigationDetail = {
+  id: string
+  input_type: string
+  category: string | null
+  risk_score: number
+  risk_level: string
+  created_at: string
+  findings: Array<{ indicator: string | null; source: string | null; verification_level: string | null }>
+  providers: Array<{ provider: string | null; status: string | null; is_malicious: boolean | null }>
+  agents: Array<{ name: string; status: string; duration_ms: number; tools_used: string[] }>
+  ml_prediction: { status?: string; predicted_class?: string | null; model_version?: string | null } | null
+  recommendation_count: number
+  url_count: number
+  privacy_note: string
+}
+export type AdminSystemHealth = {
+  services: Array<{ id: string; name: string; status: string; verification: string; selected?: boolean }>
+  provider_note: string
+  checked_at: string
+}
 export type AdminAnalytics = {
   total_users: number
   user_counts: Record<string, number>
   total_investigations: number
+  total_scam_detections: number
+  total_legitimate_classifications: number
+  total_uncertain_classifications: number
+  classification_counts_are_explicit_only: boolean
+  scam_detection_percentage: number
+  investigations_today_utc: number
+  date_range: { from_date: string; to_date: string }
+  investigations_in_range: number
+  range_detection_counts: Record<string, number>
+  recent_activity: AdminActivity[]
   investigations_per_day: Array<{ date: string; count: number }>
   category_distribution: Record<string, number>
   risk_distribution: Record<string, number>
@@ -111,16 +163,50 @@ export type AdminAnalytics = {
   agent_failure_statuses: Record<string, Record<string, number>>
   average_processing_time_ms: number | null
   feedback_counts: Record<string, number>
+  url_intelligence: {
+    malicious_results: number
+    suspicious_url_findings: number
+    clean_no_known_threat_results: number
+    provider_failures: number
+    skipped_lookups: number
+    status_counts: Record<string, number>
+    providers: Record<string, { checks: number; malicious: number; clean_no_known_threat: number; failures: number; skipped: number }>
+    clean_result_caveat: string
+  }
+  ml_monitoring: {
+    model_name: string
+    model_version: string
+    experimental: boolean
+    prediction_status_counts: Record<string, number>
+    predicted_class_counts: Record<string, number>
+    evaluation: {
+      status: string
+      source?: string
+      dataset_rows?: number
+      test?: Record<string, unknown>
+      cross_validation?: Record<string, unknown>
+      test_split_counts?: Record<string, number>
+      limitations?: string[]
+    }
+    disclaimer: string
+  }
 }
 export type Investigation = { id: string; category: string | null; risk_score: number; risk_level: string; created_at: string }
 export type Report = {
   id: string; category: string | null; risk_score: number; risk_level: string; score_is_probability: boolean
   model_confidence: string; evidence_strength: string; findings: Array<Record<string, unknown>>
   evidence: Array<Record<string, unknown>>; agents: Array<Record<string, unknown>>; urls: string[]
-  threat_intel_results: Array<{ provider: string; status: string; is_malicious?: boolean | null; reason?: string | null; detail?: string | null }>;
+  threat_intel_results: Array<{ provider: string; status: string; is_malicious?: boolean | null; reason?: string | null; detail?: string | null; failure_category?: string | null; http_status?: number | null; diagnostic?: { category?: string; http_status?: number; exception_type?: string; retry_count?: number } }>;
   url_scans: Array<{ origin?: string; status?: string; reason?: string; findings?: Array<Record<string, unknown>>; fetch?: { status?: string; reason?: string } }>; data_availability: Record<string, unknown>
-  recommendations: string[]; explanation: string; limitations: string[]; created_at: string
+  recommendations: string[]; explanation: string; explanation_source?: 'groq' | 'gemini' | 'openai' | 'deterministic_fallback' | null; limitations: string[]; created_at: string
   transaction_advisory?: { advisory_only: boolean; advisory: string; recipient_identity_check: string; claimed_recipient_provided: boolean; amount_provided: boolean; payment_initiated: boolean; risk_score: number; risk_level: string; recommendations: string[] } | null
+  ml_prediction?: {
+    status: 'completed' | 'skipped' | 'unavailable' | 'failed'
+    predicted_class: 'scam' | 'legitimate' | null
+    calibrated_probability: null
+    calibration_status: 'not_justified'
+    model_version: string | null
+  }
 }
 
 export const api = {
@@ -144,12 +230,27 @@ export const api = {
   },
   report: (id: string) => request<Report>('/investigations/' + encodeURIComponent(id) + '/report'),
   reportPdf: (id: string) => {
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const { timeZone } = getBrowserTimeZone()
     const path = '/investigations/' + encodeURIComponent(id) + '/report.pdf?time_zone=' + encodeURIComponent(timeZone)
     return requestBlob(path)
   },
   stats: () => request<{ total_investigations: number; risk_distribution: Record<string, number>; category_distribution: Record<string, number> }>('/dashboard/statistics'),
-  adminAnalytics: () => request<AdminAnalytics>('/admin/analytics'),
+  adminAnalytics: (filters: { from_date?: string; to_date?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (filters.from_date) query.set('from_date', filters.from_date)
+    if (filters.to_date) query.set('to_date', filters.to_date)
+    return request<AdminAnalytics>(`/admin/analytics${query.size ? `?${query}` : ''}`)
+  },
+  adminInvestigations: (filters: {
+    q?: string; classification?: 'all' | 'scam' | 'legitimate' | 'uncertain' | 'no_pattern'; risk_level?: string
+    from_date?: string; to_date?: string; sort_by?: string; sort_direction?: 'asc' | 'desc'; page?: number; page_size?: number
+  } = {}) => {
+    const query = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) if (value !== undefined && value !== '') query.set(key, String(value))
+    return request<AdminInvestigationPage>(`/admin/investigations${query.size ? `?${query}` : ''}`)
+  },
+  adminInvestigation: (id: string) => request<AdminInvestigationDetail>(`/admin/investigations/${encodeURIComponent(id)}`),
+  adminSystemHealth: () => request<AdminSystemHealth>('/admin/system-health'),
   categories: () => request<Array<{ code: string; name: string; language: string }>>('/scam-categories'),
   awareness: () => request<{ language: string; items: Array<{ title: string; body: string }> }>('/scam-awareness'),
   feedback: (investigation_id: string, rating: string) => request('/feedback', { method: 'POST', body: JSON.stringify({ investigation_id, rating }) }),

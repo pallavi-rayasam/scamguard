@@ -70,6 +70,33 @@ describe('auth API errors and timeout', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).credentials).toBe('include')
   })
 
+  it('uses UTC when browser time zone detection fails', async () => {
+    const NativeDateTimeFormat = Intl.DateTimeFormat
+    vi.spyOn(Intl, 'DateTimeFormat').mockImplementation((function (locales?: Intl.LocalesArgument, options?: Intl.DateTimeFormatOptions) {
+      if (!options?.timeZone) throw new RangeError('timezone detection unavailable')
+      return new NativeDateTimeFormat(locales, options)
+    }) as typeof Intl.DateTimeFormat)
+    const fetchMock = vi.fn().mockResolvedValue(new Response('%PDF-1.4', {
+      status: 200, headers: { 'Content-Type': 'application/pdf' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { api } = await import('./api')
+
+    await expect(api.reportPdf('report-id')).resolves.toBeInstanceOf(Blob)
+    expect(fetchMock.mock.calls[0][0]).toContain('time_zone=UTC')
+  })
+
+  it.each([
+    ['', 'The server returned an empty PDF. Please try again.'],
+    ['<html>not a pdf</html>', 'The server response was not a valid PDF. Please try again.'],
+  ])('rejects an empty or malformed PDF response', async (body, message) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { api } = await import('./api')
+
+    await expect(api.reportPdf('report-id')).rejects.toMatchObject({ message })
+  })
+
   it('preserves the database unavailable detail for the auth UI', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ csrf_token: 'csrf-test' }))

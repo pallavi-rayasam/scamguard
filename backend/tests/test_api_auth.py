@@ -158,6 +158,40 @@ def test_investigation_is_persisted_as_redacted_report(client):
     assert "123456" not in detail.json()["redacted_content"]
 
 
+def test_text_investigation_exposes_ml_as_separate_advisory(client):
+    class TestPredictor:
+        def predict(self, _text, input_type="text"):
+            return {
+                "status": "completed",
+                "predicted_class": "scam",
+                "calibrated_probability": None,
+                "calibration_status": "not_justified",
+                "model_version": "message-text-v1",
+            }
+
+    app.state.message_predictor = TestPredictor()
+    csrf = client.get("/api/auth/csrf").json()["csrf_token"]
+    registered = client.post(
+        "/api/auth/register",
+        headers={"X-CSRF-Token": csrf},
+        json={"email": "ml-advisory@example.com", "password": "correct-horse-battery"},
+    )
+    assert registered.status_code == 201
+    response = client.post(
+        "/api/investigations/text",
+        headers={"X-CSRF-Token": csrf},
+        json={"text": "Ordinary informational text.", "input_type": "text"},
+    )
+
+    assert response.status_code == 201
+    report = response.json()
+    assert report["ml_prediction"]["predicted_class"] == "scam"
+    assert report["ml_prediction"]["calibrated_probability"] is None
+    assert report["risk_score"] == 0
+    stored = client.get(f"/api/investigations/{report['id']}/report").json()
+    assert stored["ml_prediction"] == report["ml_prediction"]
+
+
 def test_unicode_explanation_survives_persistence_and_api_json(client, monkeypatch):
     from app.agents import workflow
 
@@ -262,7 +296,13 @@ def test_unavailable_scanner_status_is_persisted(client, monkeypatch):
     )
     assert response.status_code == 201
     report = response.json()
-    assert {item["status"] for item in report["threat_intel_results"]} == {"unavailable"}
+    assert {item["status"] for item in report["threat_intel_results"]} == {"skipped"}
+    assert {item["reason"] for item in report["threat_intel_results"]} == {"scanner_timed_out"}
+    assert report["data_availability"]["threat_intelligence"] == {
+        "google_safe_browsing": "skipped", "virustotal": "skipped",
+    }
+    intel_run = next(run for run in report["agents"] if run["agent_name"] == "ThreatIntelligence")
+    assert intel_run["status"] == "timed_out"
     assert report["evidence_strength"] == "Limited"
     assert {item["verification_level"] for item in report["findings"]} == {"heuristic"}
     assert client.get(f"/api/investigations/{report['id']}").status_code == 200
@@ -650,10 +690,12 @@ def _create_stored_pdf_report(client):
 
 def test_pdf_export_contains_stored_report_fields_unavailable_status_audit_and_local_times(client):
     report_id = _create_stored_pdf_report(client)
-    response = client.get(f"/api/investigations/{report_id}/report.pdf?time_zone=Asia%2FKolkata")
+    response = client.get(f"/api/investigations/{report_id}/report.pdf?time_zone=Asia%2FCalcutta")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/pdf")
+    assert response.headers["x-report-time-zone"] == "Asia/Calcutta"
+    assert response.headers["x-report-time-zone-fallback"] == "false"
     assert response.content.startswith(b"%PDF-")
     assert "attachment;" in response.headers["content-disposition"]
     text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(response.content)).pages)
@@ -665,6 +707,20 @@ def test_pdf_export_contains_stored_report_fields_unavailable_status_audit_and_l
         "2026-01-02 19:44:00 IST", "2026-01-02 19:43:00 IST",
     ):
         assert expected in text
+
+
+@pytest.mark.parametrize("query", ["", "?time_zone=", "?time_zone=Not%2FAZone"])
+def test_pdf_export_uses_utc_fallback_for_unavailable_timezone_inputs(client, query):
+    report_id = _create_stored_pdf_report(client)
+    response = client.get(f"/api/investigations/{report_id}/report.pdf{query}")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/pdf")
+    assert response.headers["x-report-time-zone"] == "UTC"
+    assert response.headers["x-report-time-zone-fallback"] == "true"
+    assert response.content.startswith(b"%PDF-")
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(response.content)).pages)
+    assert "2026-01-02 14:14:00 UTC" in text
 
 
 def test_pdf_export_is_only_available_to_owner_or_admin(client):

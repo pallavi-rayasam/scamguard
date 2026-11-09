@@ -7,6 +7,7 @@ import operator
 import re
 import time
 from typing import Annotated, TypedDict
+from typing import Any
 from concurrent.futures import ThreadPoolExecutor
 
 from langgraph.graph import END, START, StateGraph
@@ -22,6 +23,7 @@ from app.detection.transaction import assess_pre_transaction
 from app.detection.url_checks import inspect_url
 from app.intel.providers import check_url_reputation
 from app.llm.provider import get_explanation_provider
+from app.schemas.common import MLPredictionResult
 
 ORG_TO_DOMAINS = load_organization_domains()
 ORG_TOKENS = (*ORG_TO_DOMAINS.keys(), "police", "electricity board")
@@ -43,6 +45,7 @@ class WorkflowState(TypedDict, total=False):
     intel_results: Annotated[list[dict], operator.add]
     recommendation: list[str]
     explanation: str
+    explanation_source: str | None
     url_scan_results: list[dict]
     score: int
     risk_level: str
@@ -50,9 +53,20 @@ class WorkflowState(TypedDict, total=False):
     conversation_messages: list[dict]
     transaction_context: dict
     transaction_advisory: dict
+    ml_predictor: Any
+    ml_prediction: dict
 
 
-def _run(agent_name: str, status: str, started: float, findings: list[dict] | None = None, tools: list[str] | None = None, error: str | None = None) -> dict:
+def _run(
+    agent_name: str,
+    status: str,
+    started: float,
+    findings: list[dict] | None = None,
+    tools: list[str] | None = None,
+    error: str | None = None,
+    *,
+    failure_category: str | None = None,
+) -> dict:
     result = AgentResult(
         status=status,
         findings=findings or [],
@@ -64,7 +78,10 @@ def _run(agent_name: str, status: str, started: float, findings: list[dict] | No
         duration_ms=max(0, int((time.monotonic() - started) * 1000)),
         error=error,
     )
-    return {"agent_name": agent_name, **result.model_dump(mode="json")}
+    run = {"agent_name": agent_name, **result.model_dump(mode="json")}
+    if failure_category:
+        run["failure_category"] = failure_category
+    return run
 
 
 def guarded_agent(names: list[str], function):
@@ -74,17 +91,15 @@ def guarded_agent(names: list[str], function):
         try:
             return function(state)
         except (httpx.TimeoutException, TimeoutError) as exc:
-            if "LLMExplanation" in names:
-                _log_llm_failure(exc, "timed_out")
-            return {"runs": [_run(name, "timed_out", started, [], [], "Agent timed out.") for name in names]}
+            failure_category = _log_llm_failure(exc, "timed_out") if "LLMExplanation" in names else None
+            return {"runs": [_run(name, "timed_out", started, [], [], "Agent timed out.", failure_category=failure_category) for name in names]}
         except Exception as exc:
-            if "LLMExplanation" in names:
-                _log_llm_failure(exc, "failed")
-            return {"runs": [_run(name, "failed", started, [], [], type(exc).__name__) for name in names]}
+            failure_category = _log_llm_failure(exc, "failed") if "LLMExplanation" in names else None
+            return {"runs": [_run(name, "failed", started, [], [], type(exc).__name__, failure_category=failure_category) for name in names]}
     return invoke
 
 
-def _log_llm_failure(exc: Exception, status: str) -> None:
+def _log_llm_failure(exc: Exception, status: str) -> str | None:
     """Log provider diagnostics without exception text, request content, or credentials."""
     fields: dict[str, object] = {
         "event": "llm_provider_failure",
@@ -106,6 +121,51 @@ def _log_llm_failure(exc: Exception, status: str) -> None:
             "evidence_quote_mismatch",
         }
         fields["failure_category"] = category if category in allowed_categories else "invalid_provider_response"
+        diagnostic_details = getattr(exc, "diagnostic_details", [])
+        if isinstance(diagnostic_details, list):
+            safe_details = []
+            for detail in diagnostic_details[:5]:
+                if not isinstance(detail, dict):
+                    continue
+                field = detail.get("field")
+                error_type = detail.get("type")
+                if field in {"assessment", "signals", "signals.signal", "signals.evidence", "signal", "evidence", "explanation", "response"} and error_type in {
+                    "invalid_json", "missing_field", "unexpected_field", "invalid_choice",
+                    "wrong_type", "below_minimum", "above_limit", "validation_error",
+                }:
+                    safe_details.append({"field": field, "type": error_type})
+            if safe_details:
+                fields["validation_details"] = safe_details
+        response_metadata = getattr(exc, "provider_response_metadata", {})
+        if isinstance(response_metadata, dict):
+            safe_metadata: dict[str, object] = {}
+            if response_metadata.get("response_format_mode") in {"json_schema", "json_object"}:
+                safe_metadata["response_format_mode"] = response_metadata["response_format_mode"]
+            if response_metadata.get("finish_reason") in {"stop", "length", "tool_calls", "content_filter"}:
+                safe_metadata["finish_reason"] = response_metadata["finish_reason"]
+            if response_metadata.get("content_shape") in {"object", "non_object", "non_object_json", "invalid_json"}:
+                safe_metadata["content_shape"] = response_metadata["content_shape"]
+            root_fields = response_metadata.get("root_fields_present")
+            if isinstance(root_fields, list):
+                safe_metadata["root_fields_present"] = [
+                    field for field in root_fields
+                    if field in {"assessment", "signals", "explanation"}
+                ]
+            for field in (
+                "assessment_valid", "signals_within_limit", "explanation_valid",
+            ):
+                value = response_metadata.get(field)
+                if isinstance(value, bool):
+                    safe_metadata[field] = value
+            for field in (
+                "signal_count", "content_chars", "prompt_tokens", "completion_tokens",
+                "total_tokens", "reasoning_tokens",
+            ):
+                value = response_metadata.get(field)
+                if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10_000_000:
+                    safe_metadata[field] = value
+            if safe_metadata:
+                fields["provider_response_metadata"] = safe_metadata
     if isinstance(exc, httpx.ReadTimeout):
         fields["failure_category"] = "read_timeout"
     elif isinstance(exc, httpx.ConnectTimeout):
@@ -171,6 +231,8 @@ def _log_llm_failure(exc: Exception, status: str) -> None:
         elif response.status_code >= 500:
             fields["failure_category"] = "provider_unavailable"
     logger.warning("llm_provider_failure %s", json.dumps(fields, sort_keys=True))
+    category = fields.get("failure_category")
+    return category if isinstance(category, str) else None
 
 
 def prepare(state: WorkflowState) -> dict:
@@ -244,13 +306,50 @@ def _unavailable_reputation_response(reason: str, origin: str | None = None) -> 
     }
 
 
+def _skipped_reputation_response(reason: str, origin: str | None = None) -> dict:
+    """Represent reputation checks that were intentionally never attempted."""
+    return {
+        "status": "skipped",
+        "reason": reason,
+        "origin": origin,
+        "threat_intel_results": [
+            {"provider": provider, "status": "skipped", "is_malicious": None, "reason": reason}
+            for provider in THREAT_INTEL_PROVIDERS
+        ],
+    }
+
+
 def _normalize_reputation_response(payload: object, expected_origin: str) -> dict:
     """Validate the scanner response and return exactly one explicit result per provider."""
     if not isinstance(payload, dict):
         return _unavailable_reputation_response("invalid_scanner_response", expected_origin)
     overall_status = payload.get("status")
-    if not isinstance(overall_status, str) or overall_status not in {"completed", "blocked", "unavailable"}:
+    if not isinstance(overall_status, str) or overall_status not in {"completed", "blocked", "unavailable", "skipped"}:
         return _unavailable_reputation_response("invalid_scanner_response", expected_origin)
+    if overall_status in {"blocked", "skipped"}:
+        reason = payload.get("reason") if isinstance(payload.get("reason"), str) else f"scanner_{overall_status}"
+        return _skipped_reputation_response(reason, expected_origin)
+    if overall_status == "unavailable" and payload.get("origin") is None:
+        # The scanner may fail its second SSRF/DNS validation after /analyze succeeded.
+        # Preserve its explicit "not queried" result instead of calling this a provider
+        # outage or an origin mismatch. Only accept known, safe validation reasons.
+        reason = payload.get("reason")
+        known_prelookup_failures = {
+            "dns_resolution_failed", "target_not_publicly_validated", "non_public_address",
+            "redirect_target_not_public", "invalid_hostname", "ambiguous_numeric_address",
+        }
+        raw_results = payload.get("threat_intel_results")
+        if reason in known_prelookup_failures and isinstance(raw_results, list):
+            by_provider = {
+                item.get("provider"): item
+                for item in raw_results
+                if isinstance(item, dict) and item.get("provider") in THREAT_INTEL_PROVIDERS
+            }
+            if (
+                set(by_provider) == set(THREAT_INTEL_PROVIDERS)
+                and all(item.get("status") == "skipped" for item in by_provider.values())
+            ):
+                return _skipped_reputation_response(reason)
     if payload.get("origin") != expected_origin:
         return _unavailable_reputation_response("scanner_origin_mismatch", expected_origin)
     if overall_status != "completed":
@@ -297,10 +396,25 @@ def _normalize_reputation_response(payload: object, expected_origin: str) -> dic
             "status": provider_status,
             "is_malicious": malicious,
         }
-        for key in ("reason", "detail", "checked_at", "cached", "retry_count"):
+        for key in (
+            "reason", "detail", "checked_at", "cached", "retry_count",
+            "failure_category", "http_status",
+        ):
             value = item.get(key)
-            if isinstance(value, (str, bool, int)):
+            if isinstance(value, (str, bool, int)) and not (key == "http_status" and (isinstance(value, bool) or not 100 <= value <= 599)):
                 normalized_item[key] = value
+        diagnostic = item.get("diagnostic")
+        if isinstance(diagnostic, dict):
+            safe_diagnostic = {
+                key: value
+                for key, value in diagnostic.items()
+                if key in {"category", "http_status", "exception_type", "retry_count"}
+                and isinstance(value, (str, int))
+                and not (key == "http_status" and (isinstance(value, bool) or not 100 <= value <= 599))
+                and not (key == "retry_count" and (isinstance(value, bool) or value < 0))
+            }
+            if safe_diagnostic:
+                normalized_item["diagnostic"] = safe_diagnostic
         normalized.append(normalized_item)
 
     return {
@@ -331,7 +445,34 @@ def message_agent(state: WorkflowState) -> dict:
     started = time.monotonic()
     result = classify_message(state.get("normalized_text", ""))
     findings = result["findings"]
-    return {"category": result["category"], "findings": findings, "runs": [_run("MessageAnalysis", "completed", started, findings, ["seeded_scam_patterns", "deterministic_message_rules"])]}
+    predictor = state.get("ml_predictor")
+    if predictor is None:
+        ml_prediction = {
+            "status": "unavailable",
+            "predicted_class": None,
+            "calibrated_probability": None,
+            "calibration_status": "not_justified",
+            "model_version": settings.ml_model_version,
+        }
+    else:
+        try:
+            candidate_prediction = predictor.predict(
+                state.get("redacted_text", ""),
+                input_type=state.get("input_type", ""),
+            )
+            ml_prediction = MLPredictionResult.model_validate(candidate_prediction).model_dump(mode="json")
+        except Exception:
+            # ML is an isolated advisory; its failure must not affect deterministic findings.
+            ml_prediction = MLPredictionResult(
+                status="failed",
+                model_version=settings.ml_model_version,
+            ).model_dump(mode="json")
+    return {
+        "category": result["category"],
+        "findings": findings,
+        "ml_prediction": ml_prediction,
+        "runs": [_run("MessageAnalysis", "completed", started, findings, ["seeded_scam_patterns", "deterministic_message_rules"])],
+    }
 
 
 def url_agent(state: WorkflowState) -> dict:
@@ -407,13 +548,13 @@ def threat_intelligence_agent(state: WorkflowState) -> dict:
             url, scan_result = scan_request
             expected_origin = privacy_safe_url(url)
             if not isinstance(scan_result, dict):
-                return _unavailable_reputation_response("scanner_analysis_result_missing", expected_origin)
+                return _skipped_reputation_response("scanner_analysis_result_missing", expected_origin)
             scan_origin = scan_result.get("origin")
             if not scan_origin:
                 reason = scan_result.get("reason") if isinstance(scan_result.get("reason"), str) else "target_not_publicly_validated"
-                return _unavailable_reputation_response(reason, expected_origin)
+                return _skipped_reputation_response(reason, expected_origin)
             if scan_origin != expected_origin:
-                return _unavailable_reputation_response("scanner_origin_mismatch", expected_origin)
+                return _skipped_reputation_response("scanner_origin_mismatch", expected_origin)
             return _query_url_reputation_service(url, expected_origin)
 
         with ThreadPoolExecutor(max_workers=max(1, min(6, len(scan_requests)))) as pool:
@@ -443,10 +584,17 @@ def threat_intelligence_agent(state: WorkflowState) -> dict:
         "not_configured",
         "target_not_publicly_validated",
         "redirect_target_not_public",
+        "dns_resolution_failed",
+        "scanner_analysis_result_missing",
+        "scanner_origin_mismatch",
     }
-    if not intel_results or provider_statuses <= {"skipped"}:
+    if provider_statuses <= {"skipped"} and any(
+        "timed_out" in reason or "timeout" in reason for reason in reasons
+    ):
+        status, error = "timed_out", "The URL scanner timed out before reputation providers could be queried."
+    elif not intel_results or provider_statuses <= {"skipped"}:
         status = "skipped"
-        error = "Threat-intel providers were not configured or no lookup was possible."
+        error = "No reputation provider lookup was attempted because scanner validation or configuration did not permit it."
     elif "completed" in provider_statuses:
         status = "completed"
         error = "One or more provider results were unavailable." if provider_statuses & {"failed", "timed_out", "unavailable"} else None
@@ -565,16 +713,77 @@ def recommend(state: WorkflowState) -> dict:
     return {"recommendation": advice, "runs": [_run("Recommendation", "completed", started, [], ["risk_guidance_rules"])]}
 
 
+def _deterministic_fallback_explanation(findings: list[dict]) -> str:
+    """Summarize only verified threat-intelligence findings; never infer new evidence."""
+    details = []
+    seen = set()
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if finding.get("verification_level") != "verified":
+            continue
+        if finding.get("source") not in THREAT_INTEL_PROVIDERS:
+            continue
+        if not str(finding.get("indicator", "")).startswith("threat_intel:"):
+            continue
+        detail = finding.get("detail")
+        if isinstance(detail, str) and detail.strip() and detail not in seen:
+            details.append(detail.strip())
+            seen.add(detail)
+        if len(details) == 3:
+            break
+
+    if not details:
+        return (
+            "No verified deterministic findings were available to summarize. "
+            "This does not mean the message is safe; verify important requests through an official channel."
+        )
+    return (
+        "Deterministic fallback based only on verified findings already in this report: "
+        + "; ".join(details)
+        + ". This explanation does not establish the sender's identity; verify important requests independently."
+    )
+
+
 def explain(state: WorkflowState) -> dict:
     started = time.monotonic()
-    provider = get_explanation_provider()
-    if not provider:
-        return {"explanation": "", "runs": [_run("LLMExplanation", "skipped", started, [], [], "Configured LLM provider is not available; deterministic report remains available.")]}
     provider_tool = {
         "openai": "openai_responses_api",
         "gemini": "gemini_interactions_api",
         "groq": "groq_chat_completions_api",
     }.get(settings.llm_provider, f"{settings.llm_provider}_api")
+    is_groq = settings.llm_provider == "groq"
+    try:
+        provider = get_explanation_provider()
+    except Exception as exc:
+        provider = None
+        setup_error = exc
+    else:
+        setup_error = None
+
+    if not provider and not is_groq:
+        if setup_error:
+            _log_llm_failure(setup_error, "failed")
+            return {"explanation": "", "explanation_source": None, "runs": [_run("LLMExplanation", "failed", started, [], [], type(setup_error).__name__)]}
+        return {"explanation": "", "explanation_source": None, "runs": [_run("LLMExplanation", "skipped", started, [], [], "Configured LLM provider is not available; deterministic report remains available.")]}
+    if not provider and is_groq:
+        explanation = _deterministic_fallback_explanation(state.get("findings", []))
+        error = type(setup_error).__name__ if setup_error else "Groq provider unavailable; deterministic fallback used."
+        failure_category = _log_llm_failure(setup_error, "failed") if setup_error else None
+        return {
+            "explanation": explanation,
+            "explanation_source": "deterministic_fallback",
+            "runs": [_run(
+                "LLMExplanation",
+                "failed" if setup_error else "skipped",
+                started,
+                [],
+                [],
+                error,
+                failure_category=failure_category,
+            )],
+        }
+
     summary = {
         "category": state.get("category"),
         "risk_score": state.get("score"),
@@ -588,11 +797,37 @@ def explain(state: WorkflowState) -> dict:
     try:
         explanation = provider.explain(state.get("redacted_text", ""), summary)
         finding = {"indicator":"llm_explanation", "detail":explanation, "verification_level":"llm_inferred", "source":provider_tool, "score_weight":0}
-        return {"explanation": explanation, "findings": [finding], "runs": [_run("LLMExplanation", "completed", started, [finding], [provider_tool])]}
-    except (httpx.HTTPError, RuntimeError, ValueError, TimeoutError) as exc:
+        return {"explanation": explanation, "explanation_source": settings.llm_provider, "findings": [finding], "runs": [_run("LLMExplanation", "completed", started, [finding], [provider_tool])]}
+    except Exception as exc:
         status = "timed_out" if isinstance(exc, (httpx.TimeoutException, TimeoutError)) else "failed"
-        _log_llm_failure(exc, status)
-        return {"explanation": "", "runs": [_run("LLMExplanation", status, started, [], [provider_tool], type(exc).__name__)]}
+        failure_category = _log_llm_failure(exc, status)
+        if is_groq:
+            return {
+                "explanation": _deterministic_fallback_explanation(state.get("findings", [])),
+                "explanation_source": "deterministic_fallback",
+                "runs": [_run(
+                    "LLMExplanation",
+                    status,
+                    started,
+                    [],
+                    [provider_tool],
+                    type(exc).__name__,
+                    failure_category=failure_category,
+                )],
+            }
+        return {
+            "explanation": "",
+            "explanation_source": None,
+            "runs": [_run(
+                "LLMExplanation",
+                status,
+                started,
+                [],
+                [provider_tool],
+                type(exc).__name__,
+                failure_category=failure_category,
+            )],
+        }
 
 
 def finalize(state: WorkflowState) -> dict:
@@ -618,6 +853,19 @@ def finalize(state: WorkflowState) -> dict:
         for url in state.get("urls", [])
         if (safe_url := privacy_safe_url(url))
     ))
+    llm_run = next(
+        (run for run in reversed(state.get("runs", [])) if run["agent_name"] == "LLMExplanation"),
+        None,
+    )
+    llm_availability = llm_run["status"] if llm_run else "not_run"
+    # Keep the detailed failure in the agent audit, while exposing a clear provider
+    # availability state to report consumers. The deterministic analysis remains intact.
+    if (
+        llm_availability == "failed"
+        and llm_run
+        and "groq_chat_completions_api" in llm_run.get("tools_used", [])
+    ):
+        llm_availability = "unavailable"
     report = {
         "input_type": state.get("input_type"),
         "category": category,
@@ -625,10 +873,17 @@ def finalize(state: WorkflowState) -> dict:
         "risk_level": state.get("risk_level", "Low"),
         "score_is_probability": False,
         "model_confidence": "not_available",
+        "ml_prediction": state.get("ml_prediction", {
+            "status": "unavailable",
+            "predicted_class": None,
+            "calibrated_probability": None,
+            "calibration_status": "not_justified",
+            "model_version": settings.ml_model_version,
+        }),
         "evidence_strength": evidence_strength(findings),
         "data_availability": {
             "threat_intelligence": intel_status or {"google_safe_browsing":"not_queried", "virustotal":"not_queried"},
-            "llm": next((run["status"] for run in reversed(state.get("runs", [])) if run["agent_name"] == "LLMExplanation"), "not_run"),
+            "llm": llm_availability,
         },
         "findings": findings,
         "evidence": [e for run in state.get("runs", []) for e in run.get("evidence", [])],
@@ -640,6 +895,7 @@ def finalize(state: WorkflowState) -> dict:
         "recommendations": state.get("recommendation", []),
         "transaction_advisory": state.get("transaction_advisory"),
         "explanation": state.get("explanation", ""),
+        "explanation_source": state.get("explanation_source"),
         "limitations": limitations,
     }
     return {"report": report}
@@ -675,6 +931,6 @@ def build_workflow():
 _WORKFLOW = build_workflow()
 
 
-def investigate(text: str, input_type: str, *, conversation_messages: list[dict] | None = None, transaction_context: dict | None = None) -> dict:
-    result = _WORKFLOW.invoke({"input_text": text, "input_type": input_type, "conversation_messages": conversation_messages or [], "transaction_context": transaction_context, "findings": [], "runs": [], "intel_results": []})
+def investigate(text: str, input_type: str, *, conversation_messages: list[dict] | None = None, transaction_context: dict | None = None, ml_predictor: Any = None) -> dict:
+    result = _WORKFLOW.invoke({"input_text": text, "input_type": input_type, "conversation_messages": conversation_messages or [], "transaction_context": transaction_context, "ml_predictor": ml_predictor, "findings": [], "runs": [], "intel_results": []})
     return result["report"]

@@ -98,12 +98,17 @@ def test_url_agent_uses_internal_scanner_and_preserves_unavailable_provider_stat
     monkeypatch.setattr(workflow, "settings", replace(workflow.settings, url_scanner_url="http://url-scanner:8001"))
     monkeypatch.setattr(workflow, "_scan_url_service", lambda _url: {
         "status": "completed",
+        "origin": "https://bit.ly",
         "findings": [{"indicator": "url_shortener", "detail": "Shortener", "score_weight": 14, "source": "url_scanner", "verification_level": "heuristic"}],
+    })
+    monkeypatch.setattr(workflow, "_query_url_reputation_service", lambda _url, origin: workflow._normalize_reputation_response({
+        "status": "completed",
+        "origin": origin,
         "threat_intel_results": [
             {"provider": "google_safe_browsing", "status": "unavailable", "is_malicious": None, "reason": "not_configured"},
             {"provider": "virustotal", "status": "unavailable", "is_malicious": None, "reason": "not_configured"},
         ],
-    })
+    }, origin))
 
     report = investigate("Please review https://bit.ly", "url")
 
@@ -306,7 +311,10 @@ def test_seven_agent_nodes_and_all_run_records_follow_the_audit_contract():
 
 
 def test_llm_provider_setup_failure_falls_back_to_deterministic_report(monkeypatch):
+    from dataclasses import replace
     from app.agents import workflow
+
+    monkeypatch.setattr(workflow, "settings", replace(workflow.settings, llm_provider="gemini"))
 
     def fail_provider_setup():
         raise RuntimeError("private provider setup detail")
@@ -394,8 +402,11 @@ def test_llm_provider_failure_logs_safe_diagnostics_and_stays_failed(monkeypatch
 
 
 def test_llm_timeout_is_logged_and_not_reported_as_completed(monkeypatch, caplog):
+    from dataclasses import replace
     import httpx
     from app.agents import workflow
+
+    monkeypatch.setattr(workflow, "settings", replace(workflow.settings, llm_provider="gemini"))
 
     class TimedOutProvider:
         def explain(self, _redacted_text, _summary):
@@ -715,6 +726,126 @@ def test_http_200_malformed_reputation_response_is_explicitly_unavailable(monkey
     assert report["risk_level"] == "Low"
 
 
+def test_scanner_provider_diagnostics_survive_normalization_without_raw_details():
+    from app.agents import workflow
+
+    payload = {
+        "status": "completed",
+        "origin": "https://example.com",
+        "threat_intel_results": [
+            {
+                "provider": "google_safe_browsing",
+                "status": "unavailable",
+                "is_malicious": None,
+                "reason": "dns_failure",
+                "failure_category": "dns_failure",
+                "http_status": None,
+                "diagnostic": {
+                    "category": "dns_failure",
+                    "retry_count": 1,
+                    "exception_type": "ConnectError",
+                    "private_provider_message": "must not be copied",
+                },
+            },
+            {
+                "provider": "virustotal",
+                "status": "unavailable",
+                "is_malicious": None,
+                "reason": "tls_failure",
+                "failure_category": "tls_failure",
+                "http_status": None,
+                "diagnostic": {
+                    "category": "tls_failure",
+                    "retry_count": 1,
+                    "exception_type": "ConnectError",
+                },
+            },
+        ],
+    }
+
+    normalized = workflow._normalize_reputation_response(payload, "https://example.com")
+
+    results = {item["provider"]: item for item in normalized["threat_intel_results"]}
+    assert results["google_safe_browsing"]["failure_category"] == "dns_failure"
+    assert results["google_safe_browsing"]["diagnostic"] == {
+        "category": "dns_failure", "retry_count": 1, "exception_type": "ConnectError",
+    }
+    assert results["virustotal"]["failure_category"] == "tls_failure"
+    assert "private_provider_message" not in str(normalized)
+
+
+def test_reputation_dns_revalidation_failure_remains_skipped_not_provider_outage():
+    from app.agents import workflow
+
+    normalized = workflow._normalize_reputation_response(
+        {
+            "status": "unavailable",
+            "reason": "dns_resolution_failed",
+            "origin": None,
+            "threat_intel_results": [
+                {"provider": "google_safe_browsing", "status": "skipped", "is_malicious": None, "reason": "dns_resolution_failed"},
+                {"provider": "virustotal", "status": "skipped", "is_malicious": None, "reason": "dns_resolution_failed"},
+            ],
+        },
+        "https://example.com",
+    )
+
+    assert normalized["status"] == "skipped"
+    assert normalized["origin"] is None
+    assert {item["status"] for item in normalized["threat_intel_results"]} == {"skipped"}
+    assert {item["reason"] for item in normalized["threat_intel_results"]} == {"dns_resolution_failed"}
+
+
+def test_reserved_invalid_hostname_skips_provider_checks_and_preserves_dns_reason(monkeypatch):
+    from dataclasses import replace
+    import httpx
+    from app.agents import workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "settings",
+        replace(workflow.settings, url_scanner_url="http://url-scanner:8001"),
+    )
+    monkeypatch.setattr(workflow, "get_explanation_provider", lambda: None)
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, endpoint, json):
+            calls.append(endpoint)
+            if endpoint.endswith("/analyze"):
+                payload = {
+                    "status": "unavailable",
+                    "reason": "dns_resolution_failed",
+                    "origin": None,
+                    "findings": [],
+                }
+            else:
+                raise AssertionError("provider reputation should not be requested for an unvalidated host")
+            return httpx.Response(200, json=payload, request=httpx.Request("POST", endpoint))
+
+    monkeypatch.setattr(workflow.httpx, "Client", FakeClient)
+    report = workflow.investigate("Review https://a-reserved-name.invalid/path", "url")
+
+    assert calls == ["http://url-scanner:8001/analyze"]
+    assert {item["status"] for item in report["threat_intel_results"]} == {"skipped"}
+    assert {item["reason"] for item in report["threat_intel_results"]} == {"dns_resolution_failed"}
+    assert report["data_availability"]["threat_intelligence"] == {
+        "google_safe_browsing": "skipped",
+        "virustotal": "skipped",
+    }
+    assert not any(item["indicator"].startswith("threat_intel:") for item in report["findings"])
+    assert report["risk_score"] == 0
+
+
 @pytest.mark.parametrize(
     "case",
     [
@@ -829,8 +960,10 @@ def test_url_scanner_provider_outcomes_flow_through_report_and_risk(case, monkey
     if case in {"analyze_timeout", "analyze_failure"}:
         assert len(calls) == 1
         expected_status = "timed_out" if case == "analyze_timeout" else "failed"
-        assert url_run["status"] == intel_run["status"] == expected_status
-        assert {item["status"] for item in providers.values()} == {"unavailable"}
+        expected_intel_status = "timed_out" if case == "analyze_timeout" else "skipped"
+        assert url_run["status"] == expected_status
+        assert intel_run["status"] == expected_intel_status
+        assert {item["status"] for item in providers.values()} == {"skipped"}
         assert not any(indicator.startswith("threat_intel:") for indicator in indicators)
         assert report["risk_score"] == 0
         assert report["risk_level"] == "Low"

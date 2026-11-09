@@ -1,5 +1,6 @@
 from pathlib import Path
 import socket
+import ssl
 import sys
 
 from fastapi.testclient import TestClient
@@ -38,7 +39,7 @@ def test_exact_trusted_domain_and_https_do_not_trigger_lookalike_or_tls_finding(
     assert "url_brand_lookalike" not in {item["indicator"] for item in findings}
 
 
-def test_unconfigured_providers_are_explicitly_unavailable_without_network(monkeypatch):
+def test_unconfigured_providers_are_explicitly_unavailable_without_network(monkeypatch, caplog):
     monkeypatch.setattr(intel.settings, "google_safe_browsing_key", "")
     monkeypatch.setattr(intel.settings, "virustotal_api_key", "")
     monkeypatch.setattr(intel.httpx, "Client", lambda **kwargs: (_ for _ in ()).throw(AssertionError("network must not be used")))
@@ -47,6 +48,23 @@ def test_unconfigured_providers_are_explicitly_unavailable_without_network(monke
 
     assert [result["status"] for result in results] == ["unavailable", "unavailable"]
     assert {result["reason"] for result in results} == {"not_configured"}
+    assert caplog.text.count("not_configured") >= 2
+    assert "API key" not in caplog.text
+
+
+def test_scanner_health_reports_key_presence_without_values(monkeypatch):
+    monkeypatch.setattr(main, "settings", intel.settings)
+    monkeypatch.setattr(intel.settings, "google_safe_browsing_key", "google-secret-for-test")
+    monkeypatch.setattr(intel.settings, "virustotal_api_key", "")
+
+    response = TestClient(main.app).get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["provider_configuration"] == {
+        "google_safe_browsing": "configured",
+        "virustotal": "not_configured",
+    }
+    assert "google-secret-for-test" not in response.text
 
 
 def test_google_safe_browsing_receives_full_url_drops_fragment_and_caches(monkeypatch, caplog):
@@ -136,7 +154,111 @@ def test_provider_429_is_retried_once_then_returns_rate_limited(monkeypatch):
     assert all("example.com" not in url for url, _ in calls)
 
 
-def test_provider_timeout_retries_once_and_returns_unavailable(monkeypatch):
+@pytest.mark.parametrize(
+    ("status_code", "error_payload", "expected_reason", "expected_calls"),
+    [
+        (401, {"error": {"code": "AuthenticationRequiredError", "message": "private credential detail"}}, "authentication_failed", 1),
+        (400, {"error": {"status": "API_KEY_INVALID", "message": "secret token invalid"}}, "authentication_failed", 1),
+        (402, {"error": {"code": "billing_required", "message": "private quota detail"}}, "quota_exhausted", 1),
+        (403, {"error": {"code": "QuotaExceededError", "message": "quota exhausted"}}, "quota_exhausted", 1),
+        (429, {"error": {"code": "TooManyRequestsError"}}, "rate_limited", 2),
+        (503, {"error": {"message": "private upstream detail"}}, "provider_outage", 2),
+    ],
+)
+def test_provider_http_errors_are_classified_and_logged_without_secret_data(
+    monkeypatch, caplog, status_code, error_payload, expected_reason, expected_calls
+):
+    intel.clear_cache()
+    api_key = "private-provider-key-value"
+    private_query = "account=private-query-value"
+    monkeypatch.setattr(intel.settings, "virustotal_api_key", api_key)
+    monkeypatch.setattr(intel.time, "sleep", lambda _delay: None)
+    calls = []
+
+    class Response:
+        def __init__(self):
+            self.status_code = status_code
+            self.headers = {}
+
+        def json(self):
+            return error_payload
+
+        def raise_for_status(self):
+            raise AssertionError("HTTP errors should be classified before raise_for_status")
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers):
+            calls.append((url, headers))
+            return Response()
+
+    monkeypatch.setattr(intel.httpx, "Client", Client)
+    with caplog.at_level("WARNING", logger="url_scanner.intel"):
+        result = intel.query_virustotal(f"https://example.com/path?{private_query}")
+
+    assert result["status"] == "unavailable"
+    assert result["is_malicious"] is None
+    assert result["reason"] == expected_reason
+    assert result["failure_category"] == expected_reason
+    assert result["http_status"] == status_code
+    assert result["diagnostic"]["category"] == expected_reason
+    assert result["diagnostic"]["retry_count"] == expected_calls - 1
+    assert len(calls) == expected_calls
+    assert expected_reason in caplog.text
+    assert api_key not in caplog.text
+    assert private_query not in caplog.text
+    assert "private credential detail" not in caplog.text
+    assert "secret token invalid" not in caplog.text
+    assert "private upstream detail" not in caplog.text
+    assert "private quota detail" not in caplog.text
+
+
+def test_malformed_virustotal_success_is_unavailable_not_clean(monkeypatch):
+    intel.clear_cache()
+    monkeypatch.setattr(intel.settings, "virustotal_api_key", "test-vt-key")
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def json(self):
+            return {"data": {"attributes": {}}}
+
+        def raise_for_status(self):
+            return None
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers):
+            return Response()
+
+    monkeypatch.setattr(intel.httpx, "Client", Client)
+    result = intel.query_virustotal("https://example.com")
+
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "invalid_response"
+    assert result["is_malicious"] is None
+    assert result["failure_category"] == "malformed_response"
+    assert result["diagnostic"]["http_status"] == 200
+
+
+def test_provider_timeout_retries_once_and_returns_unavailable(monkeypatch, caplog):
     intel.clear_cache()
     monkeypatch.setattr(intel.settings, "google_safe_browsing_key", "test-google-key")
     calls = []
@@ -156,13 +278,71 @@ def test_provider_timeout_retries_once_and_returns_unavailable(monkeypatch):
             raise httpx.ReadTimeout("timed out")
 
     monkeypatch.setattr(intel.httpx, "Client", Client)
-    result = intel.query_google_safe_browsing("https://example.com/path?check=timeout#client-fragment")
+    with caplog.at_level("WARNING", logger="url_scanner.intel"):
+        result = intel.query_google_safe_browsing("https://example.com/path?check=timeout#client-fragment")
 
     assert result["status"] == "unavailable"
     assert result["is_malicious"] is None
     assert result["reason"] == "timed_out"
     assert result["retry_count"] == 1
+    assert result["failure_category"] == "timed_out"
+    assert result["diagnostic"] == {
+        "category": "timed_out", "retry_count": 1, "exception_type": "ReadTimeout",
+    }
     assert len(calls) == 2
+    assert "timed_out" in caplog.text
+    assert "test-google-key" not in caplog.text
+    assert "check=timeout" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("cause", "expected_category"),
+    [
+        (socket.gaierror(-2, "private dns detail"), "dns_failure"),
+        (ssl.SSLCertVerificationError(1, "private certificate detail"), "tls_failure"),
+    ],
+)
+def test_provider_transport_failures_keep_safe_dns_and_tls_categories(monkeypatch, caplog, cause, expected_category):
+    intel.clear_cache()
+    api_key = "secret-provider-key-for-test"
+    private_query = "account=secret-query-value"
+    monkeypatch.setattr(intel.settings, "virustotal_api_key", api_key)
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers):
+            calls.append(1)
+            failure = httpx.ConnectError("private connection detail")
+            failure.__cause__ = cause
+            raise failure
+
+    monkeypatch.setattr(intel.httpx, "Client", Client)
+    with caplog.at_level("WARNING", logger="url_scanner.intel"):
+        result = intel.query_virustotal(f"https://example.com/path?{private_query}")
+
+    assert calls == [1, 1]
+    assert result["status"] == "unavailable"
+    assert result["reason"] == expected_category
+    assert result["failure_category"] == expected_category
+    assert result["diagnostic"] == {
+        "category": expected_category,
+        "retry_count": 1,
+        "exception_type": "ConnectError",
+    }
+    assert api_key not in caplog.text
+    assert private_query not in caplog.text
+    assert "private dns detail" not in caplog.text
+    assert "private certificate detail" not in caplog.text
+    assert "private connection detail" not in caplog.text
 
 
 def test_virustotal_receives_full_url_and_parses_full_url_verdict(monkeypatch, caplog):
@@ -278,7 +458,8 @@ def test_dns_failure_is_unavailable_and_skips_provider_lookups(monkeypatch):
 
     assert result["status"] == "unavailable"
     assert result["reason"] == "dns_resolution_failed"
-    assert all(item["status"] == "unavailable" for item in result["threat_intel_results"])
+    assert all(item["status"] == "skipped" for item in result["threat_intel_results"])
+    assert {item["reason"] for item in result["threat_intel_results"]} == {"dns_resolution_failed"}
 
 
 def test_analyze_endpoint_accepts_legitimate_multi_address_dns(monkeypatch):
@@ -339,7 +520,7 @@ def test_scanner_blocks_private_targets_without_calling_reputation(monkeypatch):
 
     assert result["status"] == "blocked"
     assert result["reason"] == "non_public_address"
-    assert all(item["status"] == "unavailable" for item in result["threat_intel_results"])
+    assert all(item["status"] == "skipped" for item in result["threat_intel_results"])
 
 
 def test_scanner_falls_back_to_capped_get_when_head_is_unsupported(monkeypatch):
@@ -535,4 +716,4 @@ def test_reputation_endpoint_blocks_private_target_before_provider_lookup(monkey
     result = main.reputation(main.ScanRequest(url="http://127.0.0.1/"))
 
     assert result["status"] == "blocked"
-    assert all(item["status"] == "unavailable" for item in result["threat_intel_results"])
+    assert all(item["status"] == "skipped" for item in result["threat_intel_results"])

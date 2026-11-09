@@ -57,6 +57,24 @@ class FeedbackRequest(BaseModel):
     comment: str | None = Field(default=None, max_length=1000)
 
 
+class MLPredictionResult(BaseModel):
+    status: Literal["completed", "skipped", "unavailable", "failed"]
+    predicted_class: Literal["scam", "legitimate"] | None = None
+    calibrated_probability: float | None = Field(default=None, ge=0, le=1)
+    calibration_status: Literal["not_justified"] = "not_justified"
+    model_version: str | None = None
+
+    @model_validator(mode="after")
+    def enforce_advisory_contract(self):
+        if self.calibrated_probability is not None:
+            raise ValueError("Probability is unavailable because calibration is not justified")
+        if self.status == "completed" and self.predicted_class is None:
+            raise ValueError("Completed inference must include a prediction class")
+        if self.status != "completed" and self.predicted_class is not None:
+            raise ValueError("A prediction class is only present for completed inference")
+        return self
+
+
 class InvestigationSummary(BaseModel):
     id: UUID
     category: str | None

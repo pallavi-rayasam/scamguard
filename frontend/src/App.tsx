@@ -2,15 +2,15 @@ import { Component, createContext, useContext, useEffect, useMemo, useRef, useSt
 import {
   ArrowRight, BookOpen, CheckCircle2, ChevronRight, CircleAlert, ClipboardList, LayoutDashboard,
   LoaderCircle, LockKeyhole, LogOut, Menu, MessageSquareWarning, ScanLine, Search, Settings,
-  Shield, ShieldCheck, ShieldAlert, Sparkles, Trash2, TriangleAlert, Download, X,
+  Shield, ShieldCheck, ShieldAlert, Sparkles, Trash2, TriangleAlert, Download, Printer, X,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, type Report, type User } from './api'
 import { UrlResults } from './UrlResults'
-import { categoryLabel, formatLocalTimestamp } from './reportFormatting'
-import { AdminAnalyticsPage } from './AdminAnalyticsPage'
+import { categoryLabel, formatLocalTimestamp, getBrowserTimeZone } from './reportFormatting'
+import { AdminDashboardPage } from './AdminDashboardPage'
 
-type Page = 'home' | 'login' | 'dashboard' | 'scanner' | 'history' | 'awareness' | 'settings' | 'report' | 'admin'
+type Page = 'home' | 'login' | 'admin-login' | 'dashboard' | 'scanner' | 'history' | 'awareness' | 'settings' | 'report' | 'admin'
 type AuthContextType = { user: User | null; setUser: (user: User | null) => void; signOut: () => Promise<void> }
 const AuthContext = createContext<AuthContextType | null>(null)
 const useAuth = () => {
@@ -28,9 +28,16 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: boolean 
 
 function readPage(): Page {
   const path = location.hash.replace('#/', '').split('/')[0]
-  return (['home', 'login', 'dashboard', 'scanner', 'history', 'awareness', 'settings', 'report', 'admin'].includes(path) ? path : 'home') as Page
+  return (['home', 'login', 'admin-login', 'dashboard', 'scanner', 'history', 'awareness', 'settings', 'report', 'admin'].includes(path) ? path : 'home') as Page
 }
 function readReportId() { return location.hash.replace('#/', '').split('/')[1] ?? '' }
+
+function reportThreatIntelAvailability(report: Report): Record<string, unknown> {
+  const value = report.data_availability.threat_intelligence
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -54,6 +61,9 @@ export default function App() {
 
   if (!loaded) return <main className="center-page"><LoaderCircle className="spin" /></main>
   const needsAuth = ['dashboard', 'scanner', 'history', 'awareness', 'settings', 'report', 'admin'].includes(page)
+  if (page === 'admin-login' && user?.role === 'admin') return <AuthContext.Provider value={auth}><Shell page="admin" navigate={navigate} reportId={reportId} /></AuthContext.Provider>
+  if (page === 'admin-login' || (page === 'admin' && !user)) return <AuthContext.Provider value={auth}><AdminLoginPage navigate={navigate} /></AuthContext.Provider>
+  if (page === 'admin' && user?.role !== 'admin') return <AuthContext.Provider value={auth}><AdminAccessDenied signOut={signOut} navigate={navigate} /></AuthContext.Provider>
   if (needsAuth && !user) return <AuthContext.Provider value={auth}><LoginPage navigate={navigate} /></AuthContext.Provider>
   if (page === 'home' && !user) return <LandingPage navigate={navigate} />
   if (page === 'login' || page === 'home') return <AuthContext.Provider value={auth}><LoginPage navigate={navigate} /></AuthContext.Provider>
@@ -62,7 +72,7 @@ export default function App() {
 
 function LandingPage({ navigate }: { navigate: (page: Page) => void }) {
   return <main className="landing">
-    <header className="landing-top"><Brand /><button className="button button-quiet" onClick={() => navigate('login')}>Sign in</button></header>
+    <header className="landing-top"><Brand /><div className="landing-actions"><button className="button button-quiet" onClick={() => navigate('login')}>Sign in</button><button className="link-button" onClick={() => navigate('admin-login')}>Administrator sign in</button></div></header>
     <section className="hero"><div className="eyebrow"><span className="status-dot" />Evidence-led protection</div><h1>Pause. Check.<br /><span>Stay in control.</span></h1><p>Investigate suspicious messages, links, and payment requests with clear evidence, transparent risk scores, and calm next steps.</p><div className="hero-actions"><button className="button" onClick={() => navigate('login')}>Open investigation centre <ArrowRight size={17} /></button><span className="privacy-note"><LockKeyhole size={14} /> Advisory only · No payments initiated</span></div></section>
     <section className="feature-row"><Feature icon={<Search />} title="Investigate" body="Check text, links, conversations, and payment requests." /><Feature icon={<ShieldCheck />} title="Understand" body="See which indicators were found and how they were verified." /><Feature icon={<MessageSquareWarning />} title="Act calmly" body="Get practical steps and independent verification guidance." /></section>
     <footer className="landing-footer">Unknown does not mean safe. Scores are indicators, not probabilities.</footer>
@@ -147,6 +157,43 @@ function LoginPage({ navigate }: { navigate: (page: Page) => void }) {
     <p className="switch-mode">{mode === 'login' ? 'New to ScamGuard?' : 'Already have an account?'} <button className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); setFieldErrors({}) }}>{mode === 'login' ? 'Create account' : 'Sign in'}</button></p><div className="privacy-box"><LockKeyhole size={15} /><span>Never enter an OTP, UPI PIN, password, or full card number into an investigation.</span></div></div></main>
 }
 
+function AdminLoginPage({ navigate }: { navigate: (page: Page) => void }) {
+  const { setUser } = useAuth()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setError('')
+    setBusy(true)
+    try {
+      const user = await api.login(email.trim(), password)
+      if (user.role !== 'admin') {
+        try { await api.logout() } catch { /* Never retain a non-admin session on this entry point. */ }
+        setError('Administrator access required. This account was not granted admin access.')
+        return
+      }
+      setUser(user)
+      navigate('admin')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Administrator sign-in failed. Please retry.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <main className="center-page"><div className="auth-card admin-login-card"><button className="back-link" onClick={() => navigate('home')}>← Back to ScamShield</button><Brand /><div className="auth-heading"><span className="eyebrow">RESTRICTED CONSOLE</span><h1>Administrator sign in</h1><p>Sign in with an existing administrator account.</p></div><form onSubmit={submit} className="form-stack" noValidate>
+    <label>Email<input type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} placeholder="admin@example.com" /></label>
+    <label>Password<input type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} placeholder="Administrator password" /></label>
+    {error && <div className="error-message" role="alert"><CircleAlert size={16} />{error}</div>}
+    <button className="button button-full" disabled={busy} aria-busy={busy}>{busy ? <><LoaderCircle className="spin" size={17} />Signing in…</> : 'Sign in to admin console'}</button>
+  </form><p className="admin-login-note">Admin access is checked by the server on every protected API request.</p></div></main>
+}
+
+function AdminAccessDenied({ signOut, navigate }: { signOut: () => Promise<void>; navigate: (page: Page) => void }) {
+  return <main className="center-page"><section className="auth-card admin-login-card"><Brand /><div className="auth-heading"><span className="eyebrow">RESTRICTED CONSOLE</span><h1>Administrator access required</h1><p>This signed-in account does not have an administrator role.</p></div><div className="form-stack"><button className="button" onClick={() => navigate('admin-login')}>Use another administrator account</button><button className="button button-quiet" onClick={() => navigate('dashboard')}>Return to ScamShield</button><button className="link-button" onClick={() => void signOut()}>Sign out</button></div></section></main>
+}
+
 const navItems: Array<{ page: Page; label: string; icon: ReactNode }> = [
   { page: 'dashboard', label: 'Overview', icon: <LayoutDashboard size={18} /> },
   { page: 'scanner', label: 'New investigation', icon: <ScanLine size={18} /> },
@@ -157,12 +204,12 @@ const navItems: Array<{ page: Page; label: string; icon: ReactNode }> = [
 function Shell({ page, navigate, reportId }: { page: Page; navigate: (page: Page, id?: string) => void; reportId: string }) {
   const { user, signOut } = useAuth()
   const [mobileNav, setMobileNav] = useState(false)
-  const visibleNav = user?.role === 'admin' ? [...navItems, { page: 'admin' as Page, label: 'Admin analytics', icon: <LayoutDashboard size={18} /> }] : navItems
+  const visibleNav = user?.role === 'admin' ? [...navItems, { page: 'admin' as Page, label: 'Admin console', icon: <LayoutDashboard size={18} /> }] : navItems
   return <div className="app-shell"><aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}><div className="sidebar-head"><Brand /><button className="icon-button mobile-close" onClick={() => setMobileNav(false)} aria-label="Close navigation"><X size={18} /></button></div><div className="workspace-label">WORKSPACE</div><nav>{visibleNav.map(item => <button key={item.page} className={`nav-item ${page === item.page ? 'active' : ''}`} onClick={() => { navigate(item.page); setMobileNav(false) }}>{item.icon}<span>{item.label}</span>{page === item.page && <ChevronRight className="nav-chevron" size={15} />}</button>)}</nav><div className="sidebar-bottom"><div className="safety-tip"><Sparkles size={16} /><div><strong>Safety note</strong><span>We never initiate payments or verify account holders.</span></div></div><button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} /><span>Settings</span></button><div className="user-row"><div className="avatar">{user?.email.slice(0, 1).toUpperCase()}</div><div className="user-meta"><strong>{user?.email}</strong><span>Personal workspace</span></div><button className="icon-button logout-button" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button></div></div></aside>
     {mobileNav && <button className="scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
-    <main className="main-area"><header className="topbar"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{pageTitle(page)}</strong></div><div className="topbar-right"><span className="secure-pill"><span className="status-dot" />Private session</span></div></header><div className="content-area">{page === 'dashboard' && <DashboardPage navigate={navigate} />}{page === 'scanner' && <ScannerPage navigate={navigate} />}{page === 'history' && <HistoryPage navigate={navigate} />}{page === 'awareness' && <AwarenessPage />}{page === 'settings' && <SettingsPage navigate={navigate} />}{page === 'report' && <ReportPage id={reportId} navigate={navigate} />}{page === 'admin' && <AdminAnalyticsPage />}</div></main></div>
+    <main className="main-area"><header className="topbar"><button className="icon-button mobile-menu" aria-label="Open navigation" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{pageTitle(page)}</strong></div><div className="topbar-right"><span className="secure-pill"><span className="status-dot" />Private session</span></div></header><div className="content-area">{page === 'dashboard' && <DashboardPage navigate={navigate} />}{page === 'scanner' && <ScannerPage navigate={navigate} />}{page === 'history' && <HistoryPage navigate={navigate} />}{page === 'awareness' && <AwarenessPage />}{page === 'settings' && <SettingsPage navigate={navigate} />}{page === 'report' && <ReportPage id={reportId} navigate={navigate} />}{page === 'admin' && <AdminDashboardPage onLogout={signOut} />}</div></main></div>
 }
-function pageTitle(page: Page) { return ({ dashboard: 'Overview', scanner: 'New investigation', history: 'History', awareness: 'Awareness centre', settings: 'Settings', report: 'Investigation report', admin: 'Admin analytics', home: 'Home', login: 'Sign in' })[page] }
+function pageTitle(page: Page) { return ({ dashboard: 'Overview', scanner: 'New investigation', history: 'History', awareness: 'Awareness centre', settings: 'Settings', report: 'Investigation report', admin: 'Admin console', 'admin-login': 'Administrator sign in', home: 'Home', login: 'Sign in' })[page] }
 
 function DashboardPage({ navigate }: { navigate: (page: Page, id?: string) => void }) {
   const [stats, setStats] = useState<{ total_investigations: number; risk_distribution: Record<string, number>; category_distribution: Record<string, number> } | null>(null)
@@ -260,41 +307,50 @@ function ReportPage({ id, navigate }: { id: string; navigate: (page: Page, id?: 
   const [feedback, setFeedback] = useState('')
   const [pdfBusy, setPdfBusy] = useState(false)
   const [pdfError, setPdfError] = useState('')
+  const pdfRequestInFlight = useRef(false)
+  const browserTimeZone = getBrowserTimeZone()
   useEffect(() => { if (id) api.report(id).then(setReport).catch(e => setError(e.message)); else setError('Open this report from history to view its details.') }, [id])
   async function sendFeedback(rating: string) { if (!id) return; try { await api.feedback(id, rating); setFeedback('Thanks. Your feedback is saved separately from evaluation labels.') } catch (e) { setFeedback(e instanceof Error ? e.message : 'Feedback was not saved.') } }
   async function downloadPdf() {
+    if (pdfRequestInFlight.current) return
+    pdfRequestInFlight.current = true
     setPdfBusy(true); setPdfError('')
+    let objectUrl = ''
+    let link: HTMLAnchorElement | null = null
     try {
       const blob = await api.reportPdf(id)
-      const objectUrl = URL.createObjectURL(blob)
-      const link = document.createElement('a')
+      objectUrl = URL.createObjectURL(blob)
+      link = document.createElement('a')
       link.href = objectUrl
       link.download = 'scamguard-report-' + id + '.pdf'
       document.body.appendChild(link)
       link.click()
-      link.remove()
-      globalThis.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
     } catch (caught) {
       setPdfError(caught instanceof Error ? caught.message : 'PDF could not be downloaded.')
     } finally {
+      link?.remove()
+      if (objectUrl) globalThis.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+      pdfRequestInFlight.current = false
       setPdfBusy(false)
     }
   }
   if (error) return <><PageHeader eyebrow="REPORT" title="Report unavailable" description={error} /><button className="button" onClick={() => navigate('history')}>Back to history</button></>
   if (!report) return <div className="loading-row"><LoaderCircle className="spin" /> Loading report…</div>
-  return <><PageHeader eyebrow="INVESTIGATION REPORT" title="Evidence and next steps" description={`Created ${formatLocalTimestamp(report.created_at)}`} action={<><button className="button" onClick={downloadPdf} disabled={pdfBusy}><Download size={16} /> {pdfBusy ? 'Preparing PDF…' : 'Download PDF'}</button><button className="button button-quiet" onClick={() => navigate('history')}>Back to history</button></>} />
+  return <div className="report-page"><PageHeader eyebrow="INVESTIGATION REPORT" title="Evidence and next steps" description={`Created ${formatLocalTimestamp(report.created_at)}`} action={<div className="report-actions"><button className="button" onClick={downloadPdf} disabled={pdfBusy}><Download size={16} /> {pdfBusy ? 'Preparing PDF…' : 'Download PDF'}</button><button className="button button-quiet" onClick={() => window.print()}><Printer size={16} /> Print Report</button><button className="button button-quiet" onClick={() => navigate('history')}>Back to history</button></div>} />
+    {browserTimeZone.usedFallback && <p className="timezone-note" role="status">Browser time zone is unavailable; report timestamps are displayed in UTC.</p>}
     {pdfError && <div className="error-message" role="alert"><CircleAlert size={16} />{pdfError}</div>}
     <div className="report-grid"><section className="panel score-panel"><span className="eyebrow">DETERMINISTIC RISK SCORE</span><div className="score-display"><strong>{report.risk_score}</strong><span>/ 100</span></div><RiskBadge level={report.risk_level} /><p>This score is not a probability. Model confidence: <strong>{report.model_confidence.replaceAll('_', ' ')}</strong>.</p><div className="score-meta"><div><span>Evidence strength</span><strong>{report.evidence_strength}</strong></div><div><span>Category</span><strong>{categoryLabel(report.category)}</strong></div></div></section>
       <section className="panel findings-panel"><div className="section-head"><div><h2>Indicators found</h2><p>Each finding shows its verification level.</p></div></div>{report.findings.length ? <div className="finding-list">{report.findings.map((item, index) => <div className="finding-row" key={`${String(item.indicator)}-${index}`}><div className="finding-icon"><TriangleAlert size={16} /></div><div><strong>{String(item.detail)}</strong><span>{String(item.source)} · {String(item.verification_level)}</span></div></div>)}</div> : <EmptyState title="No indicators detected" body="No known threat does not mean the content is safe. Verify independently." />}</section>
     </div>
+    {report.ml_prediction && <section className="panel ml-suggestion-panel" aria-label="Experimental ML Suggestion"><div className="ml-suggestion-content"><span className="eyebrow">EXPERIMENTAL ML SUGGESTION</span><h2>{report.ml_prediction.status === 'completed' && report.ml_prediction.predicted_class ? `Model suggestion: ${report.ml_prediction.predicted_class === 'scam' ? 'scam-like' : 'legitimate-looking'}` : report.ml_prediction.status === 'skipped' ? 'Not applicable to this input' : 'Model suggestion unavailable'}</h2><p>This isolated advisory does not change the deterministic score, findings, verification, or recommendations.</p><div className="ml-suggestion-meta"><span className={`ml-status-badge ${report.ml_prediction.status}`}>Status: {report.ml_prediction.status.replaceAll('_', ' ')}</span>{report.ml_prediction.model_version && <span className="ml-model-version">Model: {report.ml_prediction.model_version}</span>}<span className="ml-calibration-note">Calibration is not justified; no probability is shown.</span></div></div></section>}
     {report.transaction_advisory && <section className="panel transaction-advisory"><div className="section-head"><div><h2>Pre-transaction advisory</h2><p>Advisory only · recipient identity not verified · no payment initiated.</p></div></div><p>{report.transaction_advisory.advisory}</p><ul>{report.transaction_advisory.recommendations.map(item => <li key={item}>{item}</li>)}</ul></section>}
-    {report.urls.length > 0 && <UrlResults urls={report.urls} urlScans={report.url_scans ?? []} threatIntelResults={report.threat_intel_results ?? []} findings={report.findings} />}
-    {report.explanation && <section className="panel explanation-panel"><Sparkles size={18} /><div><h2>AI explanation <span className="verification-tag llm">LLM inferred</span></h2><p>{report.explanation}</p><small>This model explanation is an opinion, not verified evidence.</small></div></section>}
-    <div className="report-grid lower-grid"><section className="panel"><div className="section-head"><div><h2>Recommended next steps</h2><p>Advisory guidance for you to verify independently.</p></div></div><ol className="recommendation-list">{report.recommendations.map((item, index) => <li key={index}><span>{index + 1}</span>{item}</li>)}</ol></section><section className="panel"><div className="section-head"><div><h2>Investigation audit</h2><p>Status per stage and tool.</p></div></div><div className="agent-list">{report.agents.map((agent, index) => <div className="agent-row" key={`${String(agent.agent_name)}-${index}`}><div className={`agent-status ${agent.status === 'completed' ? 'done' : ''}`}>{agent.status === 'completed' ? <CheckCircle2 size={15} /> : <CircleAlert size={15} />}</div><span>{String(agent.agent_name)}</span><span className={`status-label ${String(agent.status)}`}>{String(agent.status).replaceAll('_', ' ')}</span></div>)}</div></section></div>
+    {report.urls.length > 0 && <UrlResults urls={report.urls} urlScans={report.url_scans ?? []} threatIntelResults={report.threat_intel_results ?? []} threatIntelAvailability={reportThreatIntelAvailability(report)} findings={report.findings} />}
+    {report.explanation && <section className="panel explanation-panel">{report.explanation_source === 'deterministic_fallback' ? <ShieldCheck size={18} /> : <Sparkles size={18} />}<div><h2>{report.explanation_source === 'deterministic_fallback' ? 'Deterministic explanation' : 'AI explanation'} <span className={`verification-tag ${report.explanation_source === 'deterministic_fallback' ? '' : 'llm'}`}>{report.explanation_source === 'deterministic_fallback' ? 'Deterministic fallback' : (report.explanation_source ?? 'model') + ' · LLM inferred'}</span></h2><p>{report.explanation}</p><small>{report.explanation_source === 'deterministic_fallback' ? 'Based only on verified deterministic findings; no LLM response was used.' : 'This model explanation is an opinion, not verified evidence.'}</small></div></section>}
+    <div className="report-grid lower-grid"><section className="panel"><div className="section-head"><div><h2>Recommended next steps</h2><p>Advisory guidance for you to verify independently.</p></div></div><ol className="recommendation-list">{report.recommendations.map((item, index) => <li key={index}><span>{index + 1}</span>{item}</li>)}</ol></section><section className="panel"><div className="section-head"><div><h2>Investigation audit</h2><p>Status per stage and tool.</p></div></div><div className="agent-list">{report.agents.map((agent, index) => <div className="agent-row" key={`${String(agent.agent_name)}-${index}`}><div className={`agent-status ${agent.status === 'completed' ? 'done' : ''}`}>{agent.status === 'completed' ? <CheckCircle2 size={15} /> : <CircleAlert size={15} />}</div><span>{String(agent.agent_name)}</span><span className={`status-label ${String(agent.status)}`}>{String(agent.status).replaceAll('_', ' ')}</span>{typeof agent.failure_category === 'string' && <small className="agent-failure-category">{agent.failure_category.replaceAll('_', ' ')}</small>}</div>)}</div></section></div>
     <section className="panel availability-panel"><div><h2>Data availability</h2><p>Provider statuses are reported; no sample reputation data is substituted.</p></div><pre>{JSON.stringify(report.data_availability, null, 2)}</pre></section>
     <section className="panel limitation-panel"><TriangleAlert size={17} /><div><h2>Limitations</h2><ul>{report.limitations.map(item => <li key={item}>{item}</li>)}</ul></div></section>
     <section className="panel feedback-panel"><div><h2>Was this report helpful?</h2><p>Your feedback is not treated as ground truth for evaluation.</p></div><div className="feedback-actions"><button onClick={() => sendFeedback('correct')}>Correct</button><button onClick={() => sendFeedback('incorrect')}>Incorrect</button><button onClick={() => sendFeedback('uncertain')}>Uncertain</button></div>{feedback && <span className="feedback-message">{feedback}</span>}</section>
-  </>
+  </div>
 }
 
 function AwarenessPage() {

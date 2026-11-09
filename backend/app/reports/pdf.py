@@ -18,7 +18,17 @@ def _plain(value: object) -> str:
     return escape(str(value if value is not None else "")).replace("\n", "<br/>")
 
 
-def _local_timestamp(value: object, time_zone: str) -> str:
+def resolve_report_time_zone(time_zone: str | None) -> tuple[str, bool]:
+    """Return a usable IANA zone; invalid or unavailable browser zones fall back to UTC."""
+    candidate = time_zone.strip() if isinstance(time_zone, str) else ""
+    try:
+        ZoneInfo(candidate)
+        return candidate, False
+    except (ZoneInfoNotFoundError, ValueError):
+        return "UTC", True
+
+
+def _local_timestamp(value: object, zone: ZoneInfo) -> str:
     if isinstance(value, str):
         try:
             value = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -28,15 +38,13 @@ def _local_timestamp(value: object, time_zone: str) -> str:
         return "Timestamp unavailable"
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    try:
-        zone = ZoneInfo(time_zone)
-    except ZoneInfoNotFoundError as exc:
-        raise ValueError("Unknown IANA time zone") from exc
     return value.astimezone(zone).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
-def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str = "UTC") -> bytes:
+def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str | None = "UTC") -> bytes:
     """Render an export from stored report data without recomputing the investigation."""
+    zone_name, _ = resolve_report_time_zone(time_zone)
+    zone = ZoneInfo(zone_name)
     buffer = BytesIO()
     page_width, page_height = A4
     styles = getSampleStyleSheet()
@@ -57,7 +65,8 @@ def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str =
     )
     story = [
         Paragraph("ScamGuard Investigation Report", title),
-        Paragraph(f"Created: {_plain(_local_timestamp(created_at, time_zone))}", small),
+        Paragraph(f"Created: {_plain(_local_timestamp(created_at, zone))}", small),
+        Paragraph(f"Times shown in {_plain(zone_name)}.", small),
         Spacer(1, 2 * mm),
         Paragraph("Summary", heading),
         Paragraph(f"<b>Risk score:</b> {_plain(report.get('risk_score', 'Unavailable'))} / 100", body),
@@ -66,8 +75,30 @@ def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str =
         Paragraph(f"<b>Input type:</b> {_plain(report.get('input_type', 'Unavailable'))}", body),
     ]
 
+    ml_prediction = report.get("ml_prediction")
+    if isinstance(ml_prediction, dict):
+        story.append(Paragraph("Experimental ML suggestion", heading))
+        prediction = ml_prediction.get("predicted_class")
+        suggestion = {
+            "scam": "scam-like",
+            "legitimate": "legitimate-looking",
+        }.get(prediction, "No suggestion available")
+        model_version = ml_prediction.get("model_version")
+        version_text = f" | Model: {_plain(model_version)}" if model_version else ""
+        story.append(Paragraph(
+            f"<b>Suggestion:</b> {_plain(suggestion)} | "
+            f"<b>Status:</b> {_plain(ml_prediction.get('status', 'unavailable'))}{version_text}",
+            body,
+        ))
+        story.append(Paragraph(
+            "Experimental advisory only; it does not change the deterministic score, findings, verification, or recommendations. "
+            "Calibration is not justified, so no probability is shown.",
+            small,
+        ))
+
     story.append(Paragraph("Indicators and verification", heading))
     findings = report.get("findings") or []
+    findings = [item for item in findings if isinstance(item, dict)] if isinstance(findings, list) else []
     if findings:
         for item in findings:
             story.append(Paragraph(
@@ -81,21 +112,26 @@ def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str =
 
     story.append(Paragraph("Evidence timeline (local time)", heading))
     evidence = report.get("evidence") or []
+    evidence = [item for item in evidence if isinstance(item, dict)] if isinstance(evidence, list) else []
     if evidence:
         for item in evidence:
             timestamp = item.get("timestamp", item.get("observed_at"))
             story.append(Paragraph(
                 f"<b>{_plain(item.get('source', 'Evidence'))}</b> "
                 f"[{_plain(item.get('verification_level', 'unspecified'))}] - "
-                f"{_plain(_local_timestamp(timestamp, time_zone))}",
+                f"{_plain(_local_timestamp(timestamp, zone))}",
                 small,
             ))
+            if item.get("detail"):
+                story.append(Paragraph(_plain(item.get("detail")), small))
     else:
         story.append(Paragraph("No timestamped evidence records were stored.", body))
 
     story.append(Paragraph("URL and provider status", heading))
     urls = report.get("urls") or []
-    url_scans = {item.get("origin"): item for item in report.get("url_scans") or [] if isinstance(item, dict) and item.get("origin")}
+    urls = [item for item in urls if isinstance(item, str)] if isinstance(urls, list) else []
+    url_scans_raw = report.get("url_scans") or []
+    url_scans = {item.get("origin"): item for item in url_scans_raw if isinstance(item, dict) and item.get("origin")} if isinstance(url_scans_raw, list) else {}
     if urls:
         for url in urls:
             scan = url_scans.get(url, {})
@@ -106,12 +142,20 @@ def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str =
     else:
         story.append(Paragraph("No URLs were extracted.", body))
     providers = report.get("threat_intel_results") or []
+    providers = [item for item in providers if isinstance(item, dict)] if isinstance(providers, list) else []
     if providers:
         for result in providers:
+            malicious = result.get("is_malicious")
+            verdict = (
+                "known threat reported" if malicious is True
+                else "no known threat found; not verified safe" if malicious is False
+                else "verdict unavailable"
+            )
             story.append(Paragraph(
                 f"<b>{_plain(result.get('provider', 'Provider'))}:</b> "
-                f"{_plain(result.get('status', 'unavailable'))}"
-                + (f" - {_plain(result.get('reason'))}" if result.get("reason") else ""),
+                f"{_plain(result.get('status', 'unavailable'))} | {_plain(verdict)}"
+                + (f" - {_plain(result.get('reason'))}" if result.get("reason") else "")
+                + (f" - {_plain(result.get('detail'))}" if result.get("detail") else ""),
                 small,
             ))
     else:
@@ -119,9 +163,12 @@ def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str =
 
     story.append(Paragraph("Agent audit", heading))
     agents = report.get("agents") or []
+    agents = [item for item in agents if isinstance(item, dict)] if isinstance(agents, list) else []
     if agents:
         for agent in agents:
-            tools = ", ".join(str(tool) for tool in (agent.get("tools_used") or [])) or "none"
+            raw_tools = agent.get("tools_used") or []
+            tools = ", ".join(str(tool) for tool in raw_tools if isinstance(tool, str)) if isinstance(raw_tools, list) else ""
+            tools = tools or "none"
             error = f" | Error: {_plain(agent.get('error'))}" if agent.get("error") else ""
             story.append(Paragraph(
                 f"<b>{_plain(agent.get('agent_name', 'Agent'))}</b> - "
@@ -133,8 +180,17 @@ def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str =
     else:
         story.append(Paragraph("No agent audit records were stored.", body))
 
+    explanation = report.get("explanation")
+    if isinstance(explanation, str) and explanation.strip():
+        source = report.get("explanation_source")
+        source_label = str(source).replace("_", " ") if source else "unspecified source"
+        story.append(Paragraph("Explanation", heading))
+        story.append(Paragraph(f"<b>Source:</b> {_plain(source_label)}", small))
+        story.append(Paragraph(_plain(explanation), body))
+
     story.append(Paragraph("Recommendations", heading))
     recommendations = report.get("recommendations") or []
+    recommendations = [item for item in recommendations if isinstance(item, str)] if isinstance(recommendations, list) else []
     if recommendations:
         for index, recommendation in enumerate(recommendations, 1):
             story.append(Paragraph(f"{index}. {_plain(recommendation)}", body))
@@ -143,6 +199,7 @@ def build_investigation_pdf(report: dict, created_at: datetime, time_zone: str =
 
     story.append(Paragraph("Limitations", heading))
     limitations = report.get("limitations") or []
+    limitations = [item for item in limitations if isinstance(item, str)] if isinstance(limitations, list) else []
     if limitations:
         for item in limitations:
             story.append(Paragraph(f"- {_plain(item)}", body))
