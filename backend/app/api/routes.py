@@ -29,7 +29,7 @@ def _utc_timestamp(value: datetime) -> datetime:
 
 def _set_session(response: Response, user: User) -> None:
     token = issue_access_token(user.id)
-    response.set_cookie("scamguard_session", token, httponly=True, secure=settings.cookie_secure, samesite="lax", max_age=8 * 60 * 60, path="/")
+    response.set_cookie("scamguard_session", token, httponly=True, secure=settings.cookie_secure, samesite="none", max_age=8 * 60 * 60, path="/")
 
 
 @router.get("/auth/csrf")
