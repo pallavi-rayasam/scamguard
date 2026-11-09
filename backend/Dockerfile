@@ -12,4 +12,4 @@ COPY docs/testing/evaluation-report-v2.json /app/docs/testing/evaluation-report-
 COPY data /app/data
 RUN pip install --no-cache-dir .
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && python -m app.db.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && python -m app.db.seed && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
