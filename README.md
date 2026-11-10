@@ -97,6 +97,19 @@ The experimental ML model provides an additional advisory prediction. It does no
 - Vercel – Frontend hosting
 - Neon – Managed PostgreSQL database
 
+## Application Screenshots
+
+### 1. ScamGuard Homepage
+The landing page introduces the platform and its core purpose.
+
+### 2. User Dashboard
+Provides an overview of investigations, risk distribution, and recent reports.
+
+### 3. Investigation Report
+Displays detected scam indicators, risk assessment, URL intelligence results, and AI-assisted explanations.
+
+### 4. Admin Dashboard
+Provides administrative analytics, investigation statistics, scam detection trends, and system monitoring.
 ## 6. System Architecture
 
 ScamGuard separates its frontend, backend investigation services, database, and external integrations.
