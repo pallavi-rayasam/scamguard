@@ -14,7 +14,7 @@ from app.core.config import settings
 # Configuration
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_MULTIPART_OVERHEAD = 64 * 1024
-OCR_TIMEOUT_SECONDS = 30
+OCR_TIMEOUT_SECONDS = 60
 MAX_IMAGE_PIXELS = 20_000_000
 
 PNG_SIGNATURE = bytes.fromhex("89504e470d0a1a0a")
