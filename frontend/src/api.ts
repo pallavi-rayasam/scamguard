@@ -1,6 +1,6 @@
 import { getBrowserTimeZone } from './reportFormatting'
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000/api'
+const API_BASE = import.meta.env.VITE_API_BASE ?? '/api'
 let csrfToken = ''
 
 export const REQUEST_TIMEOUT_MS = 15_000
