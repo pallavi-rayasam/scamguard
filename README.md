@@ -99,17 +99,18 @@ The experimental ML model provides an additional advisory prediction. It does no
 
 ## Application Screenshots
 
-### 1. ScamGuard Homepage
-The landing page introduces the platform and its core purpose.
+### 1. Homepage
+![ScamGuard Homepage](docs/screenshots/homepage.png)
 
 ### 2. User Dashboard
-Provides an overview of investigations, risk distribution, and recent reports.
+![User Dashboard](docs/screenshots/user-dashboard.png)
 
 ### 3. Investigation Report
-Displays detected scam indicators, risk assessment, URL intelligence results, and AI-assisted explanations.
+![Investigation Report](docs/screenshots/investigation-report.png)
 
 ### 4. Admin Dashboard
-Provides administrative analytics, investigation statistics, scam detection trends, and system monitoring.
+![Admin Dashboard](docs/screenshots/admin-dashboard.png)
+
 ## 6. System Architecture
 
 ScamGuard separates its frontend, backend investigation services, database, and external integrations.
